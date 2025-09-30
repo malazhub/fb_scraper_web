@@ -681,7 +681,12 @@ def run_facebook_scraper(keywords, facebook_pages, max_posts, similarity_thresho
     max_scrolls = 5
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"]
+        )
+
+
 
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
