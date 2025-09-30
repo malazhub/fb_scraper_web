@@ -9,14 +9,14 @@ import base64
 from io import BytesIO
 import re
 import threading
-import webbrowser
+#import webbrowser
 
 import torch
 import time
 import cv2
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
-import pyautogui
+#import pyautogui
 
 
 #from PIL import ImageChops
@@ -36,7 +36,7 @@ import sqlite3
 import json
 import easyocr
 reader = easyocr.Reader(['en','ar'])  # يدعم الإنجليزية والعربية
-result = reader.readtext('path_to_image_or_numpy_array')
+#result = reader.readtext('path_to_image_or_numpy_array')
 
 
 
@@ -44,6 +44,9 @@ result = reader.readtext('path_to_image_or_numpy_array')
 
 #pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
+def take_screenshot(page):
+    page.wait_for_timeout(500)   # نصف ثانية انتظار
+    return page.screenshot(full_page=False)
 
 
 
@@ -58,7 +61,10 @@ def extract_text_with_boxes(image):
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # استخراج بيانات النص مع مواقع الصناديق
-        data = pytesseract.image_to_data(image_rgb, lang='eng+ara', output_type=pytesseract.Output.DICT)
+        results = reader.readtext(image_rgb)
+        all_texts = [res[1] for res in results]
+        grouped_blocks = [[res[1]] for res in results]
+
 
         all_texts = []
         grouped_blocks = []  # ← قائمة مضافة: لتجميع البلوكات النصية
@@ -67,28 +73,11 @@ def extract_text_with_boxes(image):
         current_block_text = []
 
         # المرور على كل كلمة في البيانات
-        for i in range(len(data['level'])):
-            block_num = data['block_num'][i]
-            text = data['text'][i].strip()
+        results = reader.readtext(image_rgb)
+        all_texts = [res[1] for res in results]
+        grouped_blocks = [[res[1]] for res in results]
+        print(f"📦 عدد الكتل النصية المكتشفة: {len(all_texts)}")
 
-            # تخطي النص الفارغ
-            if not text:
-                continue
-
-            if block_num != current_block_num:
-                if current_block_text:
-                    block_text = ' '.join(current_block_text)
-                    all_texts.append(block_text)
-                    grouped_blocks.append(current_block_text.copy())  # ← أضف البلوك كقائمة
-                current_block_text = [text]
-                current_block_num = block_num
-            else:
-                current_block_text.append(text)
-
-        if current_block_text:
-            block_text = ' '.join(current_block_text)
-            all_texts.append(block_text)
-            grouped_blocks.append(current_block_text.copy())  # ← أضف آخر بلوك
 
         print(f"📦 عدد الكتل النصية المكتشفة: {len(all_texts)}")
 
@@ -103,9 +92,7 @@ def extract_text_with_boxes(image):
 
 
 
-    except Exception as e:
-        print(f"❗ خطأ أثناء تحليل الصورة: {e}")
-        return []
+    
 
 
 
@@ -286,7 +273,8 @@ def save_cookies(context, email):
         return
     cookie_json = json.dumps(cookies)
     try:
-        conn = sqlite3.connect("sessions.db")
+        conn = sqlite3.connect("/tmp/sessions.db")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cookies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,7 +292,8 @@ def save_cookies(context, email):
 
 def load_cookies(context, email):
     try:
-        conn = sqlite3.connect("sessions.db")
+        conn = sqlite3.connect("/tmp/sessions.db")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cookies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,7 +351,9 @@ def expand_all_facebook_posts(page):
     try:
         # 1. التقاط سكرين شوت من الصفحة (Full page screenshot غير مدعوم على الهاتف، نأخذ الصورة المعروضة فقط)
         #input("i will screen shot")
-        screenshot_bytes = page.screenshot(full_page=False)
+        screenshot_bytes = take_screenshot(page)
+
+
         image_stream = BytesIO(screenshot_bytes)
         pil_image = Image.open(image_stream).convert("RGB")
 
@@ -373,46 +364,21 @@ def expand_all_facebook_posts(page):
         image = preprocess_image_for_ocr(image)
 
         # 3. استخدم pytesseract لاستخراج بيانات النصوص مع مواقع الكلمات
-        data = pytesseract.image_to_data(image, lang='eng+ara', output_type=pytesseract.Output.DICT)
-        print("📃 النصوص المكتشفة داخل الصورة:")
-        for word in data['text']:
-            print(word, end=' ')
-
-
-        #input("i am expand")
-        # 4. ابحث عن الكلمات "see more" أو "عرض المزيد" مع موقعها (مربع النص)
+        #data = pytesseract.image_to_data(image, lang='eng+ara', output_type=pytesseract.Output.DICT)
+        
+        # 3. استخدم EasyOCR لاستخراج النصوص ومواقعها
+        results = reader.readtext(image)  # reader هو EasyOCR reader
         targets = []
 
-        # التحقق من كل كلمة والكلمة التي تليها مرة واحدة فقط
-        i = 0
-        while i < len(data['text']):
-            word = data['text'][i].lower().strip()
-            next_word = data['text'][i + 1].lower().strip() if i + 1 < len(data['text']) else ""
-
-            # تطابق مباشر
-            if word in ["see more", "عرض المزيد"]:
-                x, y, w, h = data['left'][i], data['top'][i], data['width'][i], data['height'][i]
-                center_x = x + w // 2
-                center_y = y + h // 2
+        for bbox, text, conf in results:
+            text_lower = text.lower().strip()
+            if text_lower in ["see more", "عرض المزيد"]:
+                (x0, y0), (x1, y1), (x2, y2), (x3, y3) = bbox
+                center_x = int((x0 + x1 + x2 + x3) / 4)
+                center_y = int((y0 + y1 + y2 + y3) / 4)
                 targets.append((center_x, center_y))
-                print(f"✅ Found target '{word}' (single) at: ({center_x}, {center_y})")
-                break
+                print(f"✅ Found target '{text}' at: ({center_x}, {center_y})")
 
-            # تطابق من كلمتين متتاليتين
-            elif (word == "see" and next_word == "more") or (word == "عرض" and next_word == "المزيد"):
-                # نضغط فقط على الكلمة الثانية: "more" أو "المزيد"
-                x = data['left'][i + 1]
-                y = data['top'][i + 1]
-                w = data['width'][i + 1]
-                h = data['height'][i + 1]
-                center_x = x + w // 2
-                center_y = y + h // 2
-                targets.append((center_x, center_y))
-                print(f"✅ Found target '{word} {next_word}' (clicking on '{next_word}') at: ({center_x}, {center_y})")
-                break
-
-
-            i += 1
 
 
         print("targets........")
@@ -612,6 +578,7 @@ def analyze_posts_via_screenshot_ai(page: Page, keywords, max_posts, max_scrolls
 
 
 
+
       
         if last_screenshot and screenshots_are_similar(screenshot_bytes, last_screenshot):
             print("[Scroll Detection] Screenshot is similar. Skipping...")
@@ -714,7 +681,7 @@ def run_facebook_scraper(keywords, facebook_pages, max_posts, similarity_thresho
     max_scrolls = 5
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True)
 
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
@@ -880,16 +847,8 @@ def home():
 
         email = request.form.get("email", "").strip()
 
-        results_holder = {}
-        thread = threading.Thread(
-            target=lambda: results_holder.update({
-                "results": run_facebook_scraper(keywords, links, max_posts, similarity_threshold, email)
-            })
-        )
+        results = run_facebook_scraper(keywords, links, max_posts, similarity_threshold, email)
 
-        thread.start()
-        thread.join()
-        results = results_holder.get("results", [])
         if not results:
             message = "❗ No matched keyword found."
         return render_template_string(HTML_TEMPLATE, results=results, message=message)
@@ -897,12 +856,12 @@ def home():
     return render_template_string(HTML_TEMPLATE)
 
 
-def open_browser():
-    time.sleep(1)
-    webbrowser.open("http://127.0.0.1:5000")
+
+
+
+
 
 if __name__ == "__main__":
-    threading.Thread(target=open_browser).start()
-    
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
