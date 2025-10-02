@@ -683,8 +683,15 @@ def run_facebook_scraper(keywords, facebook_pages, max_posts, similarity_thresho
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--single-process",
+                "--disable-gpu"
+            ]
         )
+
 
 
 
@@ -863,10 +870,14 @@ def home():
 
 
 
+app = Flask(__name__)
 
-
+@app.route("/")
+def home():
+    return "Hello from Render!"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 5000))  # Render sets PORT dynamically
     app.run(host="0.0.0.0", port=port)
+
 
