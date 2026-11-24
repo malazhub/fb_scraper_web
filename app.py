@@ -12,8 +12,6 @@ import threading
 #import webbrowser
 
 import time
-import cv2
-import numpy as np
 #import pyautogui
 
 
@@ -63,6 +61,7 @@ def take_screenshot(page):
 
    
 def extract_text_with_boxes(image):
+    import cv2
     if image is None:
         print("🚫 فشل تحميل الصورة (image is None)")
         return []
@@ -207,6 +206,8 @@ def screenshots_are_similar(img_bytes1, img_bytes2, threshold=0.98):
 
 
 def apply_mask_to_image(image_bytes, mask):
+    import cv2
+    import numpy as np
     # تحويل الصورة من bytes إلى NumPy array بصيغة BGR (لـ OpenCV)
     image_stream = BytesIO(image_bytes)
     pil_image = Image.open(image_stream).convert("RGB")
@@ -337,6 +338,7 @@ def get_dom_snapshot(page):
 
 
 def preprocess_image_for_ocr(image):
+    import cv2
     # 1. تحويل الصورة إلى رمادية
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -361,6 +363,8 @@ import asyncio
 
 
 def expand_all_facebook_posts(page):
+    import cv2
+    import numpy as np
     try:
         # 1. التقاط سكرين شوت من الصفحة (Full page screenshot غير مدعوم على الهاتف، نأخذ الصورة المعروضة فقط)
         #input("i will screen shot")
@@ -879,12 +883,6 @@ def home():
         return render_template_string(HTML_TEMPLATE, results=results, message=message)
 
     return render_template_string(HTML_TEMPLATE)
-
-
-
-
-
-def home():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Render sets PORT dynamically
