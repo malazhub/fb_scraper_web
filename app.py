@@ -798,7 +798,7 @@ function openImage(src) {
     <title>Facebook Post Analyzer</title>
 </head>
 <body>
-    <h2>Analyze Facebook Posts   /  malaz janbeih-malazjanbeih@gmail.com-+96170647081  </h2>
+    <h2>Analyze Facebook Posts   /  malaz janbeih-malazjanbeih@gmail.com-+96178719611  </h2>
     <form method="POST">
         <label>User Email or ID:</label><br>
         <input type="text" name="email" required><br><br>
