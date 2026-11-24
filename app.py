@@ -11,22 +11,36 @@ import re
 import threading
 #import webbrowser
 
-import torch
 import time
 import cv2
 import numpy as np
-from sentence_transformers import SentenceTransformer, util
 #import pyautogui
 
 
 #from PIL import ImageChops
 # استبدال النموذج السابق بنموذج قوي للمطابقة المعنوية
-transformer_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+_transformer_model = None
+_similarity_util = None
+_ocr_reader = None
+
+def get_transformer():
+    global _transformer_model, _similarity_util
+    if _transformer_model is None:
+        from sentence_transformers import SentenceTransformer, util
+        _transformer_model = SentenceTransformer('paraphrase-MiniLM-L6-v2', device='cpu')
+        _similarity_util = util
+    return _transformer_model, _similarity_util
+
+def get_ocr_reader():
+    global _ocr_reader
+    if _ocr_reader is None:
+        import easyocr
+        _ocr_reader = easyocr.Reader(['en', 'ar'], gpu=False)
+    return _ocr_reader
 
 from PIL import Image
 from datetime import datetime
 import os
-from rembg import remove
 
 import imagehash
 
@@ -34,9 +48,6 @@ from playwright.sync_api import sync_playwright
 
 import sqlite3
 import json
-import easyocr
-reader = easyocr.Reader(['en','ar'])  # يدعم الإنجليزية والعربية
-#result = reader.readtext('path_to_image_or_numpy_array')
 
 
 
@@ -61,7 +72,7 @@ def extract_text_with_boxes(image):
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # استخراج بيانات النص مع مواقع الصناديق
-        results = reader.readtext(image_rgb)
+        results = get_ocr_reader().readtext(image_rgb)
         all_texts = [res[1] for res in results]
         grouped_blocks = [[res[1]] for res in results]
 
@@ -73,7 +84,7 @@ def extract_text_with_boxes(image):
         current_block_text = []
 
         # المرور على كل كلمة في البيانات
-        results = reader.readtext(image_rgb)
+        results = get_ocr_reader().readtext(image_rgb)
         all_texts = [res[1] for res in results]
         grouped_blocks = [[res[1]] for res in results]
         print(f"📦 عدد الكتل النصية المكتشفة: {len(all_texts)}")
@@ -224,6 +235,7 @@ def apply_mask_to_image(image_bytes, mask):
 
 
 def remove_background_with_rembg(image_bytes):
+    raise RuntimeError('Background removal skipped on low-memory Render instance')
     # فتح الصورة من Bytes وتحويلها إلى RGB
     input_image = Image.open(BytesIO(image_bytes)).convert("RGB")
     
@@ -257,10 +269,11 @@ def compute_similarity(text1, text2, threshold=0.6):
 
     # تضمين النصوص (text1 + كل أجزاء text2)
     texts = [text1] + chunks
+    transformer_model, similarity_util = get_transformer()
     embeddings = transformer_model.encode(texts, convert_to_tensor=True)
 
     # حساب التشابه بين text1 وكل جزء من text2
-    similarities = util.pytorch_cos_sim(embeddings[0], embeddings[1:])
+    similarities = similarity_util.pytorch_cos_sim(embeddings[0], embeddings[1:])
     max_similarity = similarities.max().item()
 
     #print("...max similarity with parts of text2......", max_similarity)
@@ -367,7 +380,7 @@ def expand_all_facebook_posts(page):
         #data = pytesseract.image_to_data(image, lang='eng+ara', output_type=pytesseract.Output.DICT)
         
         # 3. استخدم EasyOCR لاستخراج النصوص ومواقعها
-        results = reader.readtext(image)  # reader هو EasyOCR reader
+        results = get_ocr_reader().readtext(image)  # reader هو EasyOCR reader
         targets = []
 
         for bbox, text, conf in results:
@@ -870,11 +883,8 @@ def home():
 
 
 
-app = Flask(__name__)
 
-@app.route("/")
 def home():
-    return "Hello from Render!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Render sets PORT dynamically
