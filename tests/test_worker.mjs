@@ -197,3 +197,52 @@ test("reports both provider HTTP failures in diagnostic detail", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("uses a normal browser user agent and falls back when HTML results do not match the platform", async () => {
+  const requests = [];
+  globalThis.fetch = async function (url, options) {
+    const host = new URL(url).hostname;
+    requests.push(host);
+    assert.match(options.headers["user-agent"], /Mozilla\/5\.0.*Chrome/);
+    if (host === "html.duckduckgo.com") {
+      return new Response(
+        '<a class="result__a" href="https://example.com/education">Unrelated result</a>',
+        { status: 200, headers: { "content-type": "text/html" } }
+      );
+    }
+    return new Response(
+      '<a class="result-link" href="https://www.tiktok.com/@educationhub">Education Hub</a>',
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10"
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.returned, 1);
+    assert.equal(body.results[0].url, "https://www.tiktok.com/@educationhub");
+    assert.deepEqual(requests, ["html.duckduckgo.com", "lite.duckduckgo.com"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("treats anti-bot challenge pages as provider errors, not zero search matches", async () => {
+  globalThis.fetch = async function () {
+    return new Response("<html><body>Please complete the CAPTCHA challenge</body></html>", {
+      status: 200, headers: { "content-type": "text/html" }
+    });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&platform=facebook&type=group&limit=10"
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 502);
+    assert.match(body.detail, /anti-bot challenge/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
