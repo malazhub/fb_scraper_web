@@ -1,5 +1,6 @@
 const ALLOWED_ORIGIN = "https://riobase.github.io";
 const SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/";
+const SEARCH_LITE_ENDPOINT = "https://lite.duckduckgo.com/lite/";
 
 const SEARCH_SCOPES = {
   "facebook:group": "site:facebook.com/groups",
@@ -173,37 +174,49 @@ function extractResults(html) {
 async function searchPublicWeb(query, limit) {
   const results = [];
   const seen = new Set();
+  const endpoints = [SEARCH_ENDPOINT, SEARCH_LITE_ENDPOINT];
 
   for (let offset = 0; offset < limit; offset += 30) {
-    const url = new URL(SEARCH_ENDPOINT);
-    url.searchParams.set("q", query);
-    url.searchParams.set("s", String(offset));
-    url.searchParams.set("kl", "wt-wt");
-
-    const upstream = await fetch(url.toString(), {
-      headers: {
-        "accept": "text/html,application/xhtml+xml",
-        "accept-language": "en-US,en;q=0.9",
-        "user-agent": "smpost-search/1.0 (+https://riobase.github.io/socialpost/)"
-      },
-      cf: { cacheTtl: 0, cacheEverything: false }
-    });
-    if (!upstream.ok) throw new Error("Search provider returned HTTP " + upstream.status);
-
-    const html = await upstream.text();
-    const pageResults = extractResults(html);
+    let pageResults = [];
+    const failures = [];
+    for (const endpoint of endpoints) {
+      const url = new URL(endpoint);
+      url.searchParams.set("q", query);
+      if (endpoint === SEARCH_ENDPOINT) {
+        url.searchParams.set("s", String(offset));
+        url.searchParams.set("kl", "wt-wt");
+      }
+      try {
+        const upstream = await fetch(url.toString(), {
+          headers: {
+            "accept": "text/html,application/xhtml+xml",
+            "accept-language": "en-US,en;q=0.9",
+            "user-agent": "smpost-search/1.0 (+https://riobase.github.io/socialpost/)"
+          },
+          cf: { cacheTtl: 0, cacheEverything: false }
+        });
+        if (!upstream.ok) {
+          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML HTTP " : "DuckDuckGo Lite HTTP ") + upstream.status);
+          continue;
+        }
+        pageResults = extractResults(await upstream.text());
+        if (pageResults.length) break;
+      } catch (error) {
+        failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML: " : "DuckDuckGo Lite: ") + String(error && error.message ? error.message : error));
+      }
+    }
+    if (!pageResults.length && failures.length === endpoints.length) {
+      throw new Error(failures.join("; ").slice(0, 220));
+    }
     const before = results.length;
-
     for (const item of pageResults) {
       if (seen.has(item.url)) continue;
       seen.add(item.url);
       results.push(item);
       if (results.length >= limit) break;
     }
-
     if (results.length >= limit || results.length === before) break;
   }
-
   return results;
 }
 
