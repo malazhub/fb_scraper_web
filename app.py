@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from functools import wraps
+from html.parser import HTMLParser
 
 from flask import Flask, jsonify, render_template, request, session, send_from_directory
 from werkzeug.utils import secure_filename
@@ -128,17 +129,136 @@ def service_status():
     return jsonify({
         "ok": True,
         "service": "smpost-search-api",
-        "search_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()),
-        "search_provider": "Brave Search API",
+        "search_configured": True,
+        "search_provider": "Brave Search API (preferred) with DuckDuckGo public-web fallback",
+        "brave_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()),
     })
+
+
+class DuckDuckGoResultParser(HTMLParser):
+    """Extract ordinary public-web results from DuckDuckGo's HTML endpoint."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self.current = None
+        self.last_result = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = set((attrs.get("class") or "").split())
+        if self.current is not None:
+            self.current["depth"] += 1
+            return
+        if tag == "a" and "result__a" in classes:
+            self.current = {
+                "kind": "title", "depth": 1,
+                "url": attrs.get("href", ""), "text": []
+            }
+        elif "result__snippet" in classes:
+            self.current = {"kind": "snippet", "depth": 1, "text": []}
+
+    def handle_startendtag(self, tag, attrs):
+        return
+
+    def handle_data(self, data):
+        if self.current is not None:
+            self.current["text"].append(data)
+
+    def handle_endtag(self, tag):
+        if self.current is None:
+            return
+        self.current["depth"] -= 1
+        if self.current["depth"] > 0:
+            return
+        item = self.current
+        self.current = None
+        text = " ".join("".join(item["text"]).split())
+        if item["kind"] == "title":
+            if item["url"] and text:
+                self.last_result = {"url": item["url"], "title": text, "snippet": ""}
+                self.results.append(self.last_result)
+        elif item["kind"] == "snippet" and self.last_result is not None:
+            self.last_result["snippet"] = text
+
+
+def _unwrap_search_url(value):
+    value = str(value or "").strip()
+    try:
+        parsed = urllib.parse.urlparse(value)
+        if parsed.hostname and parsed.hostname.lower().endswith("duckduckgo.com"):
+            target = urllib.parse.parse_qs(parsed.query).get("uddg", [])
+            if target:
+                value = target[0]
+    except ValueError:
+        return ""
+    return value
+
+
+def _allowed_destination_url(value, platform, target_type):
+    value = _unwrap_search_url(value)
+    try:
+        parsed = urllib.parse.urlparse(value)
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        return ""
+    domains = {
+        "facebook": ("facebook.com",),
+        "instagram": ("instagram.com",),
+        "tiktok": ("tiktok.com",),
+        "telegram": ("t.me",),
+        "x": ("x.com", "twitter.com"),
+        "linkedin": ("linkedin.com",),
+        "youtube": ("youtube.com", "youtu.be"),
+        "pinterest": ("pinterest.com",),
+    }
+    if platform == "other":
+        return value
+    if not any(host == domain or host.endswith("." + domain)
+               for domain in domains.get(platform, ())):
+        return ""
+    if platform == "facebook" and target_type == "group" and "/groups/" not in parsed.path:
+        return ""
+    if platform == "facebook" and target_type == "page" and "/groups/" in parsed.path:
+        return ""
+    return value.split("#", 1)[0]
+
+
+def _duckduckgo_search(search_query, limit):
+    results, seen = [], set()
+    for offset in range(0, limit, 30):
+        params = urllib.parse.urlencode({"q": search_query, "s": offset})
+        url = "https://html.duckduckgo.com/html/?" + params
+        req = urllib.request.Request(url, headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        })
+        with urllib.request.urlopen(req, timeout=20) as response:
+            html = response.read().decode("utf-8", errors="replace")
+        parser = DuckDuckGoResultParser()
+        parser.feed(html)
+        before = len(results)
+        for item in parser.results:
+            canonical = _unwrap_search_url(item.get("url"))
+            if not canonical or canonical in seen:
+                continue
+            seen.add(canonical)
+            results.append({
+                "title": item.get("title", "")[:240],
+                "url": canonical,
+                "snippet": item.get("snippet", "")[:600],
+            })
+            if len(results) >= limit:
+                break
+        if len(results) >= limit or len(results) == before:
+            break
+    return results[:limit]
 
 @app.get("/api/discover")
 def discover_destinations():
-    """Search publicly indexed destination links without scraping platform pages."""
-    api_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
-    if not api_key:
-        return jsonify({"error": "In-app search is not configured. Add BRAVE_SEARCH_API_KEY to the server environment."}), 503
-
+    """Search public web indexes for destination links; this is not Facebook-account search."""
     query = str(request.args.get("q", "")).strip()[:180]
     platform = str(request.args.get("platform", "facebook")).lower()
     target_type = str(request.args.get("type", "group")).lower()
@@ -160,94 +280,85 @@ def discover_destinations():
         ("linkedin", "page"): "site:linkedin.com",
         ("youtube", "channel"): "site:youtube.com",
         ("pinterest", "profile"): "site:pinterest.com",
+        ("other", "other"): "",
     }
     scope = scopes.get((platform, target_type))
-    if platform == "other":
-        scope = ""
     if scope is None:
         return jsonify({"error": "This channel type is not configured for public search yet."}), 400
-
     search_query = f"{scope} {query}".strip()
     if platform == "facebook" and target_type == "page":
         search_query += " -site:facebook.com/groups"
-    results, seen = [], set()
-    pages = min(10, (limit + 19) // 20)
-    for page in range(pages):
-        params = urllib.parse.urlencode({
-            "q": search_query,
-            "count": min(20, limit - len(results)),
-            "offset": page,
-            "safesearch": "moderate",
-        })
-        url = "https://api.search.brave.com/res/v1/web/search?" + params
-        req = urllib.request.Request(url, headers={
-            "Accept": "application/json",
-            "X-Subscription-Token": api_key,
-            "User-Agent": "smpost/1.0",
-        })
+
+    results = []
+    source = ""
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
+    if api_key:
         try:
+            params = urllib.parse.urlencode({
+                "q": search_query, "count": min(20, limit),
+                "safesearch": "moderate",
+            })
+            req = urllib.request.Request(
+                "https://api.search.brave.com/res/v1/web/search?" + params,
+                headers={
+                    "Accept": "application/json",
+                    "X-Subscription-Token": api_key,
+                    "User-Agent": "smpost/1.0",
+                },
+            )
             with urllib.request.urlopen(req, timeout=18) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:400]
-            return jsonify({"error": f"Search provider returned HTTP {exc.code}.", "detail": detail}), 502
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            return jsonify({"error": f"Could not complete the search: {exc.__class__.__name__}."}), 502
+            web_results = (payload.get("web") or {}).get("results") or []
+            source = "Brave public web index"
+            for item in web_results:
+                canonical = _allowed_destination_url(item.get("url"), platform, target_type)
+                if not canonical:
+                    continue
+                results.append({
+                    "title": str(item.get("title", "")).strip()[:240] or urllib.parse.urlparse(canonical).hostname,
+                    "url": canonical,
+                    "snippet": str(item.get("description", "")).strip()[:600],
+                    "domain": urllib.parse.urlparse(canonical).hostname or "",
+                })
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+                json.JSONDecodeError, UnicodeDecodeError, OSError):
+            results = []
 
-        web_results = (payload.get("web") or {}).get("results") or []
-        for item in web_results:
-            link = str(item.get("url", "")).strip()
-            try:
-                parsed = urllib.parse.urlparse(link)
-            except ValueError:
-                continue
-            host = (parsed.hostname or "").lower()
-            if parsed.scheme != "https" or not host:
-                continue
-            if platform == "facebook" and host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
-                continue
-            if platform == "instagram" and host not in {"instagram.com", "www.instagram.com"}:
-                continue
-            if platform == "tiktok" and host not in {"tiktok.com", "www.tiktok.com"}:
-                continue
-            if platform == "telegram" and host not in {"t.me", "www.t.me"}:
-                continue
-            if platform == "x" and host not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
-                continue
-            if platform == "linkedin" and host not in {"linkedin.com", "www.linkedin.com"}:
-                continue
-            if platform == "youtube" and host not in {"youtube.com", "www.youtube.com"}:
-                continue
-            if platform == "pinterest" and host not in {"pinterest.com", "www.pinterest.com"}:
-                continue
-            if platform == "facebook" and target_type == "group" and "/groups/" not in parsed.path:
-                continue
-            if platform == "facebook" and target_type == "page" and "/groups/" in parsed.path:
-                continue
-            canonical = link.split("#", 1)[0]
-            if canonical in seen:
-                continue
-            seen.add(canonical)
-            results.append({
-                "title": str(item.get("title", "")).strip()[:240] or host,
-                "url": canonical,
-                "snippet": str(item.get("description", "")).strip()[:600],
-                "domain": host,
-            })
-            if len(results) >= limit:
-                break
-        if len(results) >= limit or len(web_results) < min(20, limit - len(results) + len(web_results)):
-            break
-        if not (payload.get("query") or {}).get("more_results_available", False):
-            break
+    if not results:
+        try:
+            raw_results = _duckduckgo_search(search_query, limit)
+            for item in raw_results:
+                canonical = _allowed_destination_url(item.get("url"), platform, target_type)
+                if not canonical:
+                    continue
+                results.append({
+                    "title": item.get("title") or urllib.parse.urlparse(canonical).hostname,
+                    "url": canonical,
+                    "snippet": item.get("snippet", ""),
+                    "domain": urllib.parse.urlparse(canonical).hostname or "",
+                })
+            source = "DuckDuckGo public web index"
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+            return jsonify({
+                "error": "Public search is temporarily unavailable. Please retry.",
+                "detail": exc.__class__.__name__,
+            }), 502
 
+    unique = []
+    seen = set()
+    for item in results:
+        if item["url"] not in seen:
+            seen.add(item["url"])
+            unique.append(item)
+        if len(unique) >= limit:
+            break
     return jsonify({
-        "results": results[:limit],
+        "results": unique,
         "requested": limit,
-        "returned": min(len(results), limit),
+        "returned": len(unique),
         "query": query,
         "platform": platform,
-        "source": "Brave public web index",
+        "source": source,
     })
 
 
@@ -287,7 +398,7 @@ def create_post():
         return jsonify({"error": "Add text or at least one media file."}), 400
     if not all(isinstance(value, list) for value in (media, networks, targets, schedule)):
         return jsonify({"error": "Invalid post data."}), 400
-    networks = [x for x in networks if x in {"facebook", "instagram", "tiktok"}]
+    networks = [x for x in networks if x in {"facebook", "instagram", "tiktok", "telegram", "x", "linkedin", "youtube", "pinterest", "other"}]
     if not networks:
         return jsonify({"error": "Select at least one social network."}), 400
     clean_schedule = []
@@ -340,15 +451,15 @@ def add_target():
     payload = request.get_json(silent=True) or {}
     network, target_type = str(payload.get("network", "")), str(payload.get("target_type", ""))
     name, url = str(payload.get("name", "")).strip()[:160], str(payload.get("url", "")).strip()[:1000]
-    if network not in {"facebook", "instagram", "tiktok"}:
+    supported_networks = {"facebook", "instagram", "tiktok", "telegram", "x", "linkedin", "youtube", "pinterest", "other"}
+    if network not in supported_networks:
         return jsonify({"error": "Choose a supported platform."}), 400
-    if target_type not in {"page", "group", "profile"} or not name:
+    if target_type not in {"page", "group", "profile", "channel", "community", "other"} or not name:
         return jsonify({"error": "Enter a destination name and type."}), 400
-    valid_hosts = ("https://www.facebook.com/", "https://facebook.com/",
-                   "https://www.instagram.com/", "https://instagram.com/",
-                   "https://www.tiktok.com/", "https://tiktok.com/")
-    if not url.startswith(valid_hosts):
-        return jsonify({"error": "Use a valid HTTPS link from Facebook, Instagram or TikTok."}), 400
+    canonical = _allowed_destination_url(url, network, target_type)
+    if not canonical:
+        return jsonify({"error": "Use a valid HTTPS link for the selected platform."}), 400
+    url = canonical
     target_id = str(uuid.uuid4())
     with db() as conn:
         conn.execute("INSERT INTO targets VALUES (?,?,?,?,?,?)",
