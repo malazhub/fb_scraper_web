@@ -1,6 +1,6 @@
-# SocialMediaPosts
+# smpost
 
-A mobile-friendly social content planner designed to be served directly from GitHub Pages. The application is branded **SocialMediaPosts**. The repository name remains `fb_scraper_web` to preserve existing repository links.
+A mobile-friendly social content planner designed to be served directly from GitHub Pages. The application is branded **smpost**. The repository name remains `smpost` to preserve existing repository links.
 
 ## GitHub Pages edition
 
@@ -33,14 +33,15 @@ No software can guarantee zero account restrictions. This project deliberately a
 
 ## Enable the GitHub Pages site
 
-1. Open repository **Settings → Pages**.
-2. Under **Build and deployment**, choose **Deploy from a branch**.
-3. Choose branch **`socialmediaposts-safe-v1`** and folder **`/ (root)`**.
-4. Save. The project site address will be:
+1. Merge the tested Pages application into `main`.
+2. Open repository **Settings → Pages**.
+3. Under **Build and deployment**, choose **Deploy from a branch**.
+4. Choose branch **`main`** and folder **`/ (root)`**.
+5. Save. With the repository named `smpost`, the project site address is:
 
-   `https://riobase.github.io/fb_scraper_web/`
+   `https://riobase.github.io/smpost/`
 
-The repository currently has GitHub Pages disabled, so this one-time Settings step is required. It does not require Python or Render.
+After this change is merged, confirm the Pages source is `main` and `/(root)`. The root `index.html` is the site entry point; GitHub Pages does not run the Flask/Python backend. No Render deployment is required for the static planner.
 
 ## Backend prototype
 
