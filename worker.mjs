@@ -207,6 +207,51 @@ async function searchPublicWeb(query, limit) {
   return results;
 }
 
+
+const TOPIC_EXPANSIONS = [
+  [/\\b(education|educational)\\b/i, ["education", "learning", "school", "teaching", "educators"]],
+  [/\\b(school|schools)\\b/i, ["school", "education", "academy", "learning", "teachers"]],
+  [/\\b(teacher|teachers)\\b/i, ["teachers", "educators", "teaching", "school"]],
+  [/\\b(learn|learning)\\b/i, ["learning", "education", "teaching", "school"]],
+  [/\\b(music)\\b/i, ["music", "musical", "singing", "music education"]],
+  [/\\b(sport|sports)\\b/i, ["sports", "athletics", "fitness", "team"]],
+  [/\\b(beauty)\\b/i, ["beauty", "cosmetics", "skincare", "salon"]]
+];
+
+const LOCATION_EXPANSIONS = [
+  [/\\b(beirut|bayrut|beyrouth|birut)\\b/i, ["Beirut", "Beyrouth", "Bayrut", "Lebanon"]],
+  [/\\b(lebanon|lubnan)\\b/i, ["Lebanon", "Lebanese", "Beirut"]],
+  [/\\b(uae|united arab emirates)\\b/i, ["United Arab Emirates", "UAE", "Dubai", "Abu Dhabi"]],
+  [/\\b(usa|united states)\\b/i, ["United States", "USA"]]
+];
+
+function expandTopicQuery(value) {
+  const original = String(value || "").trim();
+  for (const [pattern, terms] of TOPIC_EXPANSIONS) {
+    if (pattern.test(original)) return [...new Set([original, ...terms])].slice(0, 6);
+  }
+  return [original];
+}
+
+function expandLocationQuery(value) {
+  const original = String(value || "").trim();
+  if (!original) return [""];
+  for (const [pattern, terms] of LOCATION_EXPANSIONS) {
+    if (pattern.test(original)) return [...new Set([original, ...terms])].slice(0, 5);
+  }
+  return [original];
+}
+
+function buildExpandedSearchQueries(scope, topic, location, platform, targetType) {
+  const topics = expandTopicQuery(topic);
+  const places = expandLocationQuery(location);
+  const topicClause = topics.length > 1 ? "(" + topics.map(term => '"' + term + '"').join(" OR ") + ")" : '"' + topics[0] + '"';
+  const placeClause = places.length > 1 ? "(" + places.map(term => '"' + term + '"').join(" OR ") + ")" : (places[0] ? '"' + places[0] + '"' : "");
+  let query = [scope, topicClause, placeClause].filter(Boolean).join(" ");
+  if (platform === "facebook" && targetType === "page") query += " -site:facebook.com/groups";
+  return query;
+}
+
 export default {
   async fetch(request) {
     const origin = request.headers.get("Origin") || "";
@@ -252,14 +297,13 @@ export default {
       return responseJson({ error: "This channel type is not configured for public search yet." }, 400, origin);
     }
 
-    let searchQuery = (scope + " " + query + (location ? " " + location : "")).trim();
-    if (platform === "facebook" && targetType === "page") searchQuery += " -site:facebook.com/groups";
+    const searchQuery = buildExpandedSearchQueries(scope, query, location, platform, targetType);
 
     try {
-      const candidateLimit = Math.min(300, requestedLimit * 5);
+      const candidateLimit = Math.min(300, Math.max(requestedLimit * 3, 30));
+      const results = [];
+      const seen = new Set();
       const collect = (rawResults) => {
-        const results = [];
-        const seen = new Set();
         for (const item of rawResults) {
           const safeUrl = allowedDestinationUrl(item.url, platform, targetType);
           if (!safeUrl || seen.has(safeUrl)) continue;
@@ -272,26 +316,20 @@ export default {
           });
           if (results.length >= requestedLimit) break;
         }
-        return results;
       };
 
-      let rawResults = await searchPublicWeb(searchQuery, candidateLimit);
-      let results = collect(rawResults);
-      let locationRelaxed = false;
-      if (!results.length && location) {
-        const broaderQuery = (scope + " " + query).trim();
-        rawResults = await searchPublicWeb(broaderQuery, candidateLimit);
-        results = collect(rawResults);
-        locationRelaxed = results.length > 0;
-      }
+      const rawResults = await searchPublicWeb(searchQuery, candidateLimit);
+      collect(rawResults);
 
       return responseJson({
         results: results,
         requested: requestedLimit,
         returned: results.length,
         query: query,
+        expanded_query: searchQuery,
         location: location,
-        location_relaxed: locationRelaxed,
+        topic_expansions: expandTopicQuery(query),
+        location_expansions: expandLocationQuery(location),
         platform: platform,
         type: targetType,
         source: "DuckDuckGo public web index"
