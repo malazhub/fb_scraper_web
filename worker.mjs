@@ -153,7 +153,7 @@ function allowedDestinationUrl(value, platform, targetType) {
 
 function extractResults(html) {
   const anchors = Array.from(String(html || "").matchAll(
-    /<a\b[^>]*class\s*=\s*["'][^"']*\bresult__a|result-link\b[^"']*["'][^>]*>[\s\S]*?<\/a\s*>/gi
+    /<a\b[^>]*class\s*=\s*["'][^"']*\b(?:result__a|result-link)\b[^"']*["'][^>]*>[\s\S]*?<\/a\s*>/gi
   ));
   return anchors.map(function (match, index) {
     const opening = match[0].match(/<a\b[^>]*>/i);
@@ -161,7 +161,7 @@ function extractResults(html) {
     const nextStart = anchors[index + 1] ? anchors[index + 1].index : String(html).length;
     const tail = String(html).slice(match.index + match[0].length, nextStart);
     const snippetMatch = tail.match(
-      /<(?:a|div|td|span)\b[^>]*class\s*=\s*["'][^"']*\bresult__snippet|result-snippet\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td|span)\s*>/i
+      /<(?:a|div|td|span)\b[^>]*class\s*=\s*["'][^"']*\b(?:result__snippet|result-snippet)\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td|span)\s*>/i
     );
     return {
       title: stripMarkup(match[0].replace(/^<a\b[^>]*>/i, "").replace(/<\/a\s*>$/i, "")),
