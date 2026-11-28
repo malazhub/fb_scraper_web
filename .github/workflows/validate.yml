@@ -1,7 +1,7 @@
 name: Validate SocialMediaPosts
 on:
   push:
-    branches: [socialmediaposts-safe-v1]
+    branches: [main, socialmediaposts-safe-v1]
   pull_request:
     branches: [main]
   workflow_dispatch:
