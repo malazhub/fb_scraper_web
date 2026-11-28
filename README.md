@@ -26,13 +26,23 @@ After this one-time setup, pushes that change \`worker.mjs\` or \`wrangler.toml\
 
 Cloudflare's official deployment instructions: https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/
 
+### Search options in the app
+
+The destination finder lets the user choose the target network and its matching public destination type instead of always searching Facebook Groups. Supported public search scopes are Facebook groups/pages, Instagram profiles, TikTok profiles, Telegram groups/channels, X profiles, LinkedIn pages, YouTube channels, and Pinterest profiles. An optional location is included in the search query. The requested result count is a maximum; the Worker fetches up to five times that number of raw candidates before filtering and deduplicating destination links.
+
+Saved results retain their platform and destination type. Facebook post-result links are normalized to the parent group URL to avoid saving multiple posts from the same group as separate destinations.
+
+### Scheduling in the app
+
+The planner supports one date, a daily recurrence, or user-selected dates, plus a 24-hour grid from 00:00 to 23:00. Each checked hour creates a posting time. For example, check five hours to plan five daily slots. The current planner still saves its post plan and browser-uploaded media locally; it is not a cloud publishing scheduler.
+
 ### Search limitations
 
 Search results are publicly indexed web pages matching a platform URL pattern. They are not a private Facebook search API, do not include every group, and cannot confirm whether a group accepts posts. The requested result count is a maximum, not a guarantee. DuckDuckGo may rate-limit or change its HTML, in which case search can temporarily fail.
 
 ## Publishing and scheduling
 
-The current page stores post plans and media in this browser. The selected date/time is a plan; it does **not** automatically send a post. This search Worker only provides public destination discovery.
+The current page stores post plans and media in this browser. The date/recurrence and 24-hour selections are planning data; they do **not** automatically send a post. The search Worker only provides public destination discovery. Closing the browser or turning off the computer does not run or publish saved plans.
 
 Automatic publishing requires separate, approved API integrations and authorization for each platform, a secure token store, persistent scheduler/queue, media hosting, retries and delivery tracking. Adding a destination URL does not grant publishing permission. In particular, arbitrary Facebook Group auto-posting is not supported by Meta's current public publishing APIs. Do not enter social passwords, session cookies or two-factor codes in smpost.
 
