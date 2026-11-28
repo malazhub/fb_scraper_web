@@ -3,15 +3,19 @@ const SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/";
 
 const SEARCH_SCOPES = {
   "facebook:group": "site:facebook.com/groups",
-  "facebook:page": "site:facebook.com",
+  "facebook:page": "site:facebook.com -site:facebook.com/groups",
   "instagram:profile": "site:instagram.com",
-  "tiktok:profile": "site:tiktok.com",
+  "tiktok:profile": "site:tiktok.com/@",
   "telegram:group": "site:t.me",
   "telegram:channel": "site:t.me",
-  "x:profile": "(site:x.com OR site:twitter.com)",
-  "linkedin:page": "site:linkedin.com",
-  "youtube:channel": "site:youtube.com",
-  "pinterest:profile": "site:pinterest.com",
+  "x:profile": "(site:x.com OR site:twitter.com) -inurl:/status/ -inurl:/i/communities/",
+  "x:community": "site:x.com/i/communities",
+  "linkedin:page": "site:linkedin.com/company",
+  "linkedin:group": "site:linkedin.com/groups",
+  "linkedin:profile": "site:linkedin.com/in",
+  "youtube:channel": "(site:youtube.com/@ OR site:youtube.com/channel OR site:youtube.com/c OR site:youtube.com/user)",
+  "pinterest:profile": "site:pinterest.com -inurl:/pin/ -inurl:/board/",
+  "pinterest:board": "site:pinterest.com -inurl:/pin/",
   "other:other": ""
 };
 
@@ -101,6 +105,38 @@ function allowedDestinationUrl(value, platform, targetType) {
     })) return "";
   }
 
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  if (platform === "instagram" && targetType === "profile") {
+    if (!/^\/(?!p$|reel$|tv$|explore$|stories$|direct$|accounts$|about$|developer$)[^/]+$/i.test(path)) return "";
+  }
+  if (platform === "tiktok" && targetType === "profile") {
+    if (!/^\/@[^/]+$/i.test(path)) return "";
+  }
+  if (platform === "x" && targetType === "profile") {
+    if (!/^\/(?!i$|home$|explore$|search$|settings$|messages$|notifications$|compose$|intent$|share$|hashtag$)[^/]+$/i.test(path)) return "";
+  }
+  if (platform === "x" && targetType === "community") {
+    if (!/^\/i\/communities\/[^/]+$/i.test(path)) return "";
+  }
+  if (platform === "linkedin" && targetType === "page") {
+    if (!/^\/(company|school)\/[^/]+/i.test(path)) return "";
+  }
+  if (platform === "linkedin" && targetType === "group") {
+    if (!/^\/groups\/[^/]+/i.test(path)) return "";
+  }
+  if (platform === "linkedin" && targetType === "profile") {
+    if (!/^\/in\/[^/]+/i.test(path)) return "";
+  }
+  if (platform === "youtube" && targetType === "channel") {
+    if (!/^\/(?:@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)$/i.test(path)) return "";
+  }
+  if (platform === "pinterest" && targetType === "profile") {
+    if (!/^\/(?!pin$|ideas$|_created$|_saved$)[^/]+$/i.test(path)) return "";
+  }
+  if (platform === "pinterest" && targetType === "board") {
+    if (!/^\/(?!pin\/)[^/]+\/[^/]+$/i.test(path)) return "";
+  }
+
   if (platform === "facebook" && targetType === "group") {
     const group = parsed.pathname.match(/^\/groups\/([^/]+)/i);
     if (!group) return "";
@@ -142,7 +178,7 @@ async function searchPublicWeb(query, limit) {
     const url = new URL(SEARCH_ENDPOINT);
     url.searchParams.set("q", query);
     url.searchParams.set("s", String(offset));
-    url.searchParams.set("kl", "us-en");
+    url.searchParams.set("kl", "wt-wt");
 
     const upstream = await fetch(url.toString(), {
       headers: {
@@ -221,21 +257,32 @@ export default {
 
     try {
       const candidateLimit = Math.min(300, requestedLimit * 5);
-      const rawResults = await searchPublicWeb(searchQuery, candidateLimit);
-      const results = [];
-      const seen = new Set();
+      const collect = (rawResults) => {
+        const results = [];
+        const seen = new Set();
+        for (const item of rawResults) {
+          const safeUrl = allowedDestinationUrl(item.url, platform, targetType);
+          if (!safeUrl || seen.has(safeUrl)) continue;
+          seen.add(safeUrl);
+          results.push({
+            title: item.title.slice(0, 240),
+            url: safeUrl,
+            snippet: item.snippet.slice(0, 600),
+            domain: new URL(safeUrl).hostname
+          });
+          if (results.length >= requestedLimit) break;
+        }
+        return results;
+      };
 
-      for (const item of rawResults) {
-        const safeUrl = allowedDestinationUrl(item.url, platform, targetType);
-        if (!safeUrl || seen.has(safeUrl)) continue;
-        seen.add(safeUrl);
-        results.push({
-          title: item.title.slice(0, 240),
-          url: safeUrl,
-          snippet: item.snippet.slice(0, 600),
-          domain: new URL(safeUrl).hostname
-        });
-        if (results.length >= requestedLimit) break;
+      let rawResults = await searchPublicWeb(searchQuery, candidateLimit);
+      let results = collect(rawResults);
+      let locationRelaxed = false;
+      if (!results.length && location) {
+        const broaderQuery = (scope + " " + query).trim();
+        rawResults = await searchPublicWeb(broaderQuery, candidateLimit);
+        results = collect(rawResults);
+        locationRelaxed = results.length > 0;
       }
 
       return responseJson({
@@ -244,7 +291,9 @@ export default {
         returned: results.length,
         query: query,
         location: location,
+        location_relaxed: locationRelaxed,
         platform: platform,
+        type: targetType,
         source: "DuckDuckGo public web index"
       }, 200, origin);
     } catch (error) {
