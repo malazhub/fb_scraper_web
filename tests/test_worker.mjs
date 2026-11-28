@@ -78,7 +78,7 @@ test("validates query and result limit", async () => {
   const empty = await worker.fetch(new Request("https://worker.example/api/discover?q=%20"));
   assert.equal(empty.status, 400);
   const tooMany = await worker.fetch(new Request(
-    "https://worker.example/api/discover?q=education&limit=101"
+    "https://worker.example/api/discover?q=education&limit=301"
   ));
   assert.equal(tooMany.status, 400);
 });
