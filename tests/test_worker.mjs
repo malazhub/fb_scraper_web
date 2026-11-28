@@ -33,8 +33,34 @@ test("discovery returns Facebook groups and filters unrelated URLs", async () =>
     const body = await response.json();
     assert.equal(body.returned, 1);
     assert.equal(body.results[0].title, "Education Hub");
-    assert.equal(body.results[0].url, "https://www.facebook.com/groups/education-hub");
+    assert.equal(body.results[0].url, "https://www.facebook.com/groups/education-hub/");
     assert.equal(body.results[0].snippet, "A public education group.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("search passes location and supports TikTok profile destinations", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedSearch = "";
+  globalThis.fetch = async function (url) {
+    capturedSearch = new URL(url).searchParams.get("q") || "";
+    const html = '<div class="result"><a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a><a class="result__snippet">Learning videos.</a></div>';
+    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&location=Beirut%2C%20Lebanon&platform=tiktok&type=profile&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.match(capturedSearch, /education/);
+    assert.match(capturedSearch, /Beirut, Lebanon/);
+    assert.equal(body.platform, "tiktok");
+    assert.equal(body.location, "Beirut, Lebanon");
+    assert.equal(body.returned, 1);
+    assert.equal(body.results[0].url, "https://www.tiktok.com/@learnwithme");
   } finally {
     globalThis.fetch = originalFetch;
   }
