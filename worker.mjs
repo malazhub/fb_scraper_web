@@ -207,8 +207,8 @@ export default {
     const requestedLimit = Number(url.searchParams.get("limit") || "20");
 
     if (!query) return responseJson({ error: "Enter a search topic." }, 400, origin);
-    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 100) {
-      return responseJson({ error: "Result limit must be between 1 and 100." }, 400, origin);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 300) {
+      return responseJson({ error: "Result limit must be between 1 and 300." }, 400, origin);
     }
 
     const scope = SEARCH_SCOPES[platform + ":" + targetType];
