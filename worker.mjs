@@ -60,7 +60,7 @@ function stripMarkup(value) {
 }
 
 function getAttribute(tag, name) {
-  const match = String(tag || "").match(new RegExp(name + "\\s*=\\s*(['\"])(.*?)\\1", "i"));
+  const match = String(tag || "").match(new RegExp(name + "\s*=\s*(['\"])(.*?)\\1", "i"));
   return match ? decodeEntities(match[2]) : "";
 }
 
@@ -151,17 +151,17 @@ function allowedDestinationUrl(value, platform, targetType) {
 }
 
 function xmlTagValue(source, tag) {
-  const match = String(source || "").match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + "\\s*>", "i"));
+  const match = String(source || "").match(new RegExp("<" + tag + "(?:\s[^>]*)?>([\s\S]*?)</" + tag + "\s*>", "i"));
   if (!match) return "";
-  return stripMarkup(match[1].replace(/^<!\\[CDATA\\[/i, "").replace(/\\]\\]>$/i, ""));
+  return stripMarkup(match[1].replace(/^<!\[CDATA\[/i, "").replace(/\]\]>$/i, ""));
 }
 
 function extractRssResults(xml) {
   const source = String(xml || "");
-  if (!/<rss\\b/i.test(source) && !/<channel\\b/i.test(source)) {
+  if (!/<rss\b/i.test(source) && !/<channel\b/i.test(source)) {
     throw new Error("Bing RSS returned an invalid feed instead of search results");
   }
-  return Array.from(source.matchAll(/<item\\b[^>]*>([\\s\\S]*?)<\\/item\\s*>/gi))
+  return Array.from(source.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item\s*>/gi))
     .map(function (match) {
       const item = match[1];
       return {
