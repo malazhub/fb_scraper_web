@@ -82,3 +82,72 @@ test("validates query and result limit", async () => {
   ));
   assert.equal(tooMany.status, 400);
 });
+
+test("search returns X communities and filters out profile URLs", async () => {
+  globalThis.fetch = async function () {
+    const html = [
+      '<a class="result__a" href="https://x.com/i/communities/123456789">Public educators community</a>',
+      '<a class="result__a" href="https://x.com/educatornews">Educator News profile</a>'
+    ].join("");
+    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=educators&platform=x&type=community&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.returned, 1);
+    assert.equal(body.results[0].url, "https://x.com/i/communities/123456789");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LinkedIn group search only returns group URLs", async () => {
+  globalThis.fetch = async function () {
+    const html = [
+      '<a class="result__a" href="https://www.linkedin.com/groups/123456/">Teachers community</a>',
+      '<a class="result__a" href="https://www.linkedin.com/in/teacher-one/">Teacher profile</a>'
+    ].join("");
+    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=teachers&platform=linkedin&type=group&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.returned, 1);
+    assert.equal(body.results[0].url, "https://www.linkedin.com/groups/123456/");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("location-specific empty results retry without location and report broader results", async () => {
+  let calls = 0;
+  globalThis.fetch = async function (url) {
+    calls += 1;
+    const q = new URL(url).searchParams.get("q") || "";
+    const html = q.includes("Beirut")
+      ? '<html><body>No local index results</body></html>'
+      : '<a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a>';
+    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&location=Beirut&platform=tiktok&type=profile&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(calls, 2);
+    assert.equal(body.returned, 1);
+    assert.equal(body.location_relaxed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
