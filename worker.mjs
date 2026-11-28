@@ -220,7 +220,8 @@ export default {
     if (platform === "facebook" && targetType === "page") searchQuery += " -site:facebook.com/groups";
 
     try {
-      const rawResults = await searchPublicWeb(searchQuery, requestedLimit);
+      const candidateLimit = Math.min(300, requestedLimit * 5);
+      const rawResults = await searchPublicWeb(searchQuery, candidateLimit);
       const results = [];
       const seen = new Set();
 
