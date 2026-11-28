@@ -216,7 +216,7 @@ async function searchPublicWeb(query, limit) {
       results.push(item);
       if (results.length >= limit) break;
     }
-    if (results.length >= limit || results.length === before) break;
+    if (pageResults.length < 30 || results.length >= limit || results.length === before) break;
   }
   return results;
 }
