@@ -1,6 +1,5 @@
 const ALLOWED_ORIGIN = "https://riobase.github.io";
 const SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/";
-const SEARCH_LITE_ENDPOINT = "https://lite.duckduckgo.com/lite/";
 
 const SEARCH_SCOPES = {
   "facebook:group": "site:facebook.com/groups",
@@ -153,7 +152,7 @@ function allowedDestinationUrl(value, platform, targetType) {
 
 function extractResults(html) {
   const anchors = Array.from(String(html || "").matchAll(
-    /<a\b[^>]*class\s*=\s*["'][^"']*\b(?:result__a|result-link)\b[^"']*["'][^>]*>[\s\S]*?<\/a\s*>/gi
+    /<a\b[^>]*class\s*=\s*["'][^"']*\bresult__a\b[^"']*["'][^>]*>[\s\S]*?<\/a\s*>/gi
   ));
   return anchors.map(function (match, index) {
     const opening = match[0].match(/<a\b[^>]*>/i);
@@ -161,7 +160,7 @@ function extractResults(html) {
     const nextStart = anchors[index + 1] ? anchors[index + 1].index : String(html).length;
     const tail = String(html).slice(match.index + match[0].length, nextStart);
     const snippetMatch = tail.match(
-      /<(?:a|div|td|span)\b[^>]*class\s*=\s*["'][^"']*\b(?:result__snippet|result-snippet)\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td|span)\s*>/i
+      /<(?:a|div|td|span)\b[^>]*class\s*=\s*["'][^"']*\bresult__snippet\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td|span)\s*>/i
     );
     return {
       title: stripMarkup(match[0].replace(/^<a\b[^>]*>/i, "").replace(/<\/a\s*>$/i, "")),
@@ -176,31 +175,25 @@ async function searchPublicWeb(query, limit) {
   const seen = new Set();
 
   for (let offset = 0; offset < limit; offset += 30) {
-    let pageResults = [];
-    for (const endpoint of [SEARCH_ENDPOINT, SEARCH_LITE_ENDPOINT]) {
-      const url = new URL(endpoint);
-      url.searchParams.set("q", query);
-      url.searchParams.set("s", String(offset));
-      url.searchParams.set("kl", "wt-wt");
+    const url = new URL(SEARCH_ENDPOINT);
+    url.searchParams.set("q", query);
+    url.searchParams.set("s", String(offset));
+    url.searchParams.set("kl", "wt-wt");
 
-      const upstream = await fetch(url.toString(), {
-        headers: {
-          "accept": "text/html,application/xhtml+xml",
-          "accept-language": "en-US,en;q=0.9",
-          "user-agent": "Mozilla/5.0 (compatible; smpost-search/1.0; +https://riobase.github.io/socialpost/)"
-        },
-        cf: { cacheTtl: 0, cacheEverything: false }
-      });
-      if (!upstream.ok) throw new Error("Search provider returned HTTP " + upstream.status);
-      const html = await upstream.text();
-      if (/anomaly-modal|captcha|verify you are human|automated requests/i.test(html)) {
-        throw new Error("Public search provider temporarily blocked automated search");
-      }
-      pageResults = extractResults(html);
-      if (pageResults.length) break;
-    }
+    const upstream = await fetch(url.toString(), {
+      headers: {
+        "accept": "text/html,application/xhtml+xml",
+        "accept-language": "en-US,en;q=0.9",
+        "user-agent": "smpost-search/1.0 (+https://riobase.github.io/socialpost/)"
+      },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!upstream.ok) throw new Error("Search provider returned HTTP " + upstream.status);
 
+    const html = await upstream.text();
+    const pageResults = extractResults(html);
     const before = results.length;
+
     for (const item of pageResults) {
       if (seen.has(item.url)) continue;
       seen.add(item.url);
@@ -208,76 +201,10 @@ async function searchPublicWeb(query, limit) {
       if (results.length >= limit) break;
     }
 
-    if (results.length >= limit || results.length === before || pageResults.length === 0) break;
+    if (results.length >= limit || results.length === before) break;
   }
 
   return results;
-}
-
-const TOPIC_EXPANSIONS = [
-  [/\b(education|educational)\b/i, ["education", "learning", "school", "teaching", "educators"]],
-  [/\b(school|schools)\b/i, ["school", "education", "academy", "learning", "teachers"]],
-  [/\b(teacher|teachers)\b/i, ["teachers", "educators", "teaching", "school"]],
-  [/\b(learn|learning)\b/i, ["learning", "education", "teaching", "school"]],
-  [/\b(music)\b/i, ["music", "musical", "singing", "music education"]],
-  [/\b(sport|sports)\b/i, ["sports", "athletics", "fitness", "team"]],
-  [/\b(beauty)\b/i, ["beauty", "cosmetics", "skincare", "salon"]]
-];
-
-const LOCATION_EXPANSIONS = [
-  [/\b(beirut|bayrut|beyrouth|birut)\b/i, ["Beirut", "Beyrouth", "Bayrut", "Lebanon"]],
-  [/\b(lebanon|lubnan)\b/i, ["Lebanon", "Lebanese", "Beirut"]],
-  [/\b(uae|united arab emirates)\b/i, ["United Arab Emirates", "UAE", "Dubai", "Abu Dhabi"]],
-  [/\b(usa|united states)\b/i, ["United States", "USA"]]
-];
-
-function expandTopicQuery(value) {
-  const original = String(value || "").trim();
-  for (const [pattern, terms] of TOPIC_EXPANSIONS) {
-    if (pattern.test(original)) return [...new Set([original, ...terms])].slice(0, 6);
-  }
-  return [original];
-}
-
-function expandLocationQuery(value) {
-  const original = String(value || "").trim();
-  if (!original) return [""];
-  for (const [pattern, terms] of LOCATION_EXPANSIONS) {
-    if (pattern.test(original)) return [...new Set([original, ...terms])].slice(0, 5);
-  }
-  return [original];
-}
-
-function makeSearchQuery(scope, topic, location, platform, targetType) {
-  const clean = value => String(value || "").replace(/["']/g, " ").replace(/\s+/g, " ").trim();
-  const parts = [scope, clean(topic), clean(location)].filter(Boolean);
-  let query = parts.join(" ");
-  if (platform === "facebook" && targetType === "page") query += " -site:facebook.com/groups";
-  return query;
-}
-
-function buildExpandedSearchQueries(scope, topic, location, platform, targetType) {
-  const topics = expandTopicQuery(topic);
-  const places = expandLocationQuery(location);
-  const localized = [];
-  const add = (term, place) => {
-    const query = makeSearchQuery(scope, term, place, platform, targetType);
-    if (query && !localized.includes(query)) localized.push(query);
-  };
-
-  if (places[0]) {
-    add(topics[0], places[0]);
-    topics.slice(1, 5).forEach(term => add(term, places[0]));
-    places.slice(1, 4).forEach(place => add(topics[0], place));
-  }
-
-  const fallback = topics.map(term => makeSearchQuery(scope, term, "", platform, targetType));
-  return {
-    localized: localized.slice(0, 8),
-    fallback: [...new Set(fallback)].slice(0, 6),
-    topics,
-    places
-  };
 }
 
 export default {
@@ -325,14 +252,14 @@ export default {
       return responseJson({ error: "This channel type is not configured for public search yet." }, 400, origin);
     }
 
-    const searchQueries = buildExpandedSearchQueries(scope, query, location, platform, targetType);
+    let searchQuery = (scope + " " + query + (location ? " " + location : "")).trim();
+    if (platform === "facebook" && targetType === "page") searchQuery += " -site:facebook.com/groups";
 
     try {
-      const candidateLimit = Math.min(30, Math.max(20, Math.min(requestedLimit * 2, 30)));
-      const results = [];
-      const seen = new Set();
-      const queriesUsed = [];
+      const candidateLimit = Math.min(300, requestedLimit * 5);
       const collect = (rawResults) => {
+        const results = [];
+        const seen = new Set();
         for (const item of rawResults) {
           const safeUrl = allowedDestinationUrl(item.url, platform, targetType);
           if (!safeUrl || seen.has(safeUrl)) continue;
@@ -345,23 +272,17 @@ export default {
           });
           if (results.length >= requestedLimit) break;
         }
+        return results;
       };
 
-      for (const searchQuery of searchQueries.localized) {
-        if (results.length >= requestedLimit) break;
-        queriesUsed.push(searchQuery);
-        collect(await searchPublicWeb(searchQuery, candidateLimit));
-      }
-
+      let rawResults = await searchPublicWeb(searchQuery, candidateLimit);
+      let results = collect(rawResults);
       let locationRelaxed = false;
-      if (results.length < requestedLimit) {
-        for (const searchQuery of searchQueries.fallback) {
-          if (results.length >= requestedLimit) break;
-          queriesUsed.push(searchQuery);
-          const before = results.length;
-          collect(await searchPublicWeb(searchQuery, candidateLimit));
-          if (results.length > before) locationRelaxed = Boolean(location);
-        }
+      if (!results.length && location) {
+        const broaderQuery = (scope + " " + query).trim();
+        rawResults = await searchPublicWeb(broaderQuery, candidateLimit);
+        results = collect(rawResults);
+        locationRelaxed = results.length > 0;
       }
 
       return responseJson({
@@ -369,15 +290,11 @@ export default {
         requested: requestedLimit,
         returned: results.length,
         query: query,
-        expanded_query: queriesUsed[0] || searchQueries.fallback[0] || "",
-        search_queries_used: queriesUsed.length,
-        location_relaxed: locationRelaxed,
         location: location,
-        topic_expansions: searchQueries.topics,
-        location_expansions: searchQueries.places,
+        location_relaxed: locationRelaxed,
         platform: platform,
         type: targetType,
-        source: "DuckDuckGo public web index (HTML and Lite)"
+        source: "DuckDuckGo public web index"
       }, 200, origin);
     } catch (error) {
       return responseJson({
