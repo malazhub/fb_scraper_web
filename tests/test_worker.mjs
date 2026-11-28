@@ -151,3 +151,30 @@ test("location-specific empty results retry without location and report broader 
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("education topic expands to related search terms", async () => {
+  let searched = "";
+  globalThis.fetch = async function (url) {
+    searched = new URL(url).searchParams.get("q") || "";
+    return new Response(
+      '<a class="result__a" href="https://www.facebook.com/groups/12345">Learning community</a>',
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&location=Beirut&platform=facebook&type=group&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.match(searched, /learning/i);
+    assert.match(searched, /school/i);
+    assert.match(searched, /Beyrouth/i);
+    assert.match(searched, /Lebanon/i);
+    assert.equal(body.returned, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
