@@ -28,7 +28,9 @@ Cloudflare's official deployment instructions: https://developers.cloudflare.com
 
 ### Search options in the app
 
-The destination finder lets the user choose the target network and its matching public destination type instead of always searching Facebook Groups. Supported public search scopes are Facebook groups/pages, Instagram profiles, TikTok profiles, Telegram groups/channels, X profiles, LinkedIn pages, YouTube channels, and Pinterest profiles. An optional location is included in the search query. The requested result count is a maximum; the Worker fetches up to five times that number of raw candidates before filtering and deduplicating destination links.
+The destination finder supports several platform rows in one search. Choose Facebook, Instagram, TikTok, Telegram, X, LinkedIn, YouTube, Pinterest, or Other, with the destination type appropriate to that platform. Add another platform row to search several networks together. Each result has one checkbox: checking it immediately saves the destination and selects it for the post; unchecking it removes it from the current post selection. There is no separate Add-result action or second manual destination-add step.
+
+The optional location is included in each platform search. The requested result count is a maximum per platform; the Worker fetches up to five times that number of raw candidates before filtering and deduplicating destination links. Public search engines may still return fewer valid matches than requested.
 
 Saved results retain their platform and destination type. Facebook post-result links are normalized to the parent group URL to avoid saving multiple posts from the same group as separate destinations.
 
