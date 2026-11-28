@@ -102,7 +102,7 @@ function allowedDestinationUrl(value, platform, targetType) {
   }
 
   if (platform === "facebook" && targetType === "group") {
-    const group = parsed.pathname.match(/^\\/groups\\/([^/]+)/i);
+    const group = parsed.pathname.match(/^\/groups\/([^/]+)/i);
     if (!group) return "";
     // Search engines often return individual posts as group results.
     // Normalize each to the canonical group home URL.
