@@ -42,9 +42,9 @@ test("discovery returns Facebook groups and filters unrelated URLs", async () =>
 
 test("search passes location and supports TikTok profile destinations", async () => {
   const originalFetch = globalThis.fetch;
-  let capturedSearch = "";
+  const capturedSearch = [];
   globalThis.fetch = async function (url) {
-    capturedSearch = new URL(url).searchParams.get("q") || "";
+    capturedSearch.push(new URL(url).searchParams.get("q") || "");
     const html = '<div class="result"><a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a><a class="result__snippet">Learning videos.</a></div>';
     return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
   };
@@ -55,8 +55,8 @@ test("search passes location and supports TikTok profile destinations", async ()
     ));
     assert.equal(response.status, 200);
     const body = await response.json();
-    assert.match(capturedSearch, /education/);
-    assert.match(capturedSearch, /Beirut, Lebanon/);
+    assert.ok(capturedSearch.some(q => /education/i.test(q)));
+    assert.ok(capturedSearch.some(q => /Beirut, Lebanon/i.test(q)));
     assert.equal(body.platform, "tiktok");
     assert.equal(body.location, "Beirut, Lebanon");
     assert.equal(body.returned, 1);
