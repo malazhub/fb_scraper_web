@@ -1,6 +1,5 @@
 const ALLOWED_ORIGIN = "https://riobase.github.io";
-const SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/";
-const SEARCH_LITE_ENDPOINT = "https://lite.duckduckgo.com/lite/";
+const SEARCH_ENDPOINT = "https://www.bing.com/search";
 
 const SEARCH_SCOPES = {
   "facebook:group": "site:facebook.com/groups",
@@ -151,107 +150,62 @@ function allowedDestinationUrl(value, platform, targetType) {
   return parsed.href;
 }
 
-function extractResults(html) {
-  const source = String(html || "");
-  const anchors = Array.from(source.matchAll(
-    /<a\b[^>]*class\s*=\s*["'][^"']*\b(?:result__a|result-link)\b[^"']*["'][^>]*>[\s\S]*?<\/a\s*>/gi
-  ));
-  return anchors.map(function (match, index) {
-    const opening = match[0].match(/<a\b[^>]*>/i);
-    const href = opening ? getAttribute(opening[0], "href") : "";
-    const nextStart = anchors[index + 1] ? anchors[index + 1].index : source.length;
-    const tail = source.slice(match.index + match[0].length, nextStart);
-    const snippetMatch = tail.match(
-      /<(?:a|div|td|span)\b[^>]*class\s*=\s*["'][^"']*\b(?:result__snippet|result-snippet)\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td|span)\s*>/i
-    );
-    return {
-      title: stripMarkup(match[0].replace(/^<a\b[^>]*>/i, "").replace(/<\/a\s*>$/i, "")),
-      url: unwrapSearchUrl(href),
-      snippet: snippetMatch ? stripMarkup(snippetMatch[1]) : ""
-    };
-  }).filter(function (item) { return item.title && item.url; });
+function xmlTagValue(source, tag) {
+  const match = String(source || "").match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + "\\s*>", "i"));
+  if (!match) return "";
+  return stripMarkup(match[1].replace(/^<!\\[CDATA\\[/i, "").replace(/\\]\\]>$/i, ""));
 }
 
-function classifySearchPage(html, parsedCount) {
-  const source = String(html || "");
-  if (/anomaly-modal|captcha|challenge|unusual traffic|verify (?:that )?you are human|automated quer(?:y|ies)/i.test(source)) {
-    return "blocked";
+function extractRssResults(xml) {
+  const source = String(xml || "");
+  if (!/<rss\\b/i.test(source) && !/<channel\\b/i.test(source)) {
+    throw new Error("Bing RSS returned an invalid feed instead of search results");
   }
-  if (parsedCount > 0) return "results";
-  if (/no (?:web )?results|no results found|no local index results/i.test(source)) {
-    return "empty";
-  }
-  return "unknown";
+  return Array.from(source.matchAll(/<item\\b[^>]*>([\\s\\S]*?)<\\/item\\s*>/gi))
+    .map(function (match) {
+      const item = match[1];
+      return {
+        title: xmlTagValue(item, "title"),
+        url: xmlTagValue(item, "link"),
+        snippet: xmlTagValue(item, "description")
+      };
+    })
+    .filter(function (item) { return item.title && item.url; });
 }
 
 async function searchPublicWeb(query, limit, platform, targetType) {
   const results = [];
   const seen = new Set();
-  const endpoints = [SEARCH_ENDPOINT, SEARCH_LITE_ENDPOINT];
+  const pageSize = 10;
 
-  for (let offset = 0; offset < limit; offset += 30) {
-    let pageResults = [];
-    let pageHadFullResultSet = false;
-    let healthyProvider = false;
-    const failures = [];
+  for (let offset = 0; offset < limit; offset += pageSize) {
+    const url = new URL(SEARCH_ENDPOINT);
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "rss");
+    url.searchParams.set("count", String(pageSize));
+    url.searchParams.set("first", String(offset + 1));
 
-    for (const endpoint of endpoints) {
-      const url = new URL(endpoint);
-      url.searchParams.set("q", query);
-      if (endpoint === SEARCH_ENDPOINT) {
-        url.searchParams.set("s", String(offset));
-      }
-      try {
-        const upstream = await fetch(url.toString(), {
-          headers: {
-            "accept": "text/html,application/xhtml+xml",
-            "accept-language": "en-US,en;q=0.9",
-            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-          },
-          cf: { cacheTtl: 0, cacheEverything: false }
-        });
-        if (!upstream.ok) {
-          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML HTTP " : "DuckDuckGo Lite HTTP ") + upstream.status);
-          continue;
-        }
+    const upstream = await fetch(url.toString(), {
+      headers: {
+        "accept": "application/rss+xml, application/xml, text/xml;q=0.9",
+        "accept-language": "en-US,en;q=0.9",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
 
-        const html = await upstream.text();
-        const parsed = extractResults(html);
-        const pageStatus = classifySearchPage(html, parsed.length);
-        if (pageStatus === "blocked") {
-          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML" : "DuckDuckGo Lite") + " returned an anti-bot challenge");
-          continue;
-        }
-        if (pageStatus === "unknown") {
-          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML" : "DuckDuckGo Lite") + " returned an unrecognized page instead of search results");
-          continue;
-        }
-
-        healthyProvider = true;
-        if (pageStatus === "empty") continue;
-
-        const matching = parsed.filter(function (item) {
-          return !!allowedDestinationUrl(item.url, platform, targetType);
-        });
-        if (matching.length) {
-          pageResults = matching;
-          pageHadFullResultSet = parsed.length >= 30;
-          break;
-        }
-        // Do not stop on irrelevant links. Let the Lite endpoint try the
-        // same query before reporting that this platform has no matches.
-      } catch (error) {
-        failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML: " : "DuckDuckGo Lite: ") +
-          String(error && error.message ? error.message : error));
-      }
+    if (!upstream.ok) {
+      throw new Error("Bing RSS search returned HTTP " + upstream.status);
     }
 
-    if (!healthyProvider && failures.length === endpoints.length) {
-      throw new Error(failures.join("; ").slice(0, 220));
-    }
+    const feed = await upstream.text();
+    const pageResults = extractRssResults(feed);
+    const matching = pageResults.filter(function (item) {
+      return !!allowedDestinationUrl(item.url, platform, targetType);
+    });
 
     const before = results.length;
-    for (const item of pageResults) {
+    for (const item of matching) {
       const canonical = allowedDestinationUrl(item.url, platform, targetType);
       if (!canonical || seen.has(canonical)) continue;
       seen.add(canonical);
@@ -259,7 +213,7 @@ async function searchPublicWeb(query, limit, platform, targetType) {
       if (results.length >= limit) break;
     }
 
-    if (!pageHadFullResultSet || results.length >= limit || results.length === before) break;
+    if (pageResults.length < pageSize || results.length >= limit || results.length === before) break;
   }
   return results;
 }
@@ -285,7 +239,7 @@ export default {
         ok: true,
         service: "smpost-search-api",
         search_configured: true,
-        search_provider: "DuckDuckGo public web index"
+        search_provider: "Bing public RSS search"
       }, 200, origin);
     }
 
@@ -351,7 +305,7 @@ export default {
         location_relaxed: locationRelaxed,
         platform: platform,
         type: targetType,
-        source: "DuckDuckGo public web index"
+        source: "Bing public RSS search"
       }, 200, origin);
     } catch (error) {
       return responseJson({
