@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 _TEMP_DIR = tempfile.TemporaryDirectory(prefix="socialmediaposts-tests-")
@@ -29,10 +30,25 @@ class SocialMediaPostsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"smpost", response.data)
 
-    def test_public_discovery_requires_search_key(self):
+    @patch("app.urllib.request.urlopen")
+    def test_public_discovery_uses_keyless_public_search_fallback(self, mock_urlopen):
         os.environ.pop("BRAVE_SEARCH_API_KEY", None)
+        mock_urlopen.return_value = io.BytesIO(
+            b'<div class="result"><a class="result__a" href="https://www.facebook.com/groups/education-hub">Education Hub</a><a class="result__snippet">A public education community.</a></div>'
+        )
         response = self.client.get("/api/discover?q=education&platform=facebook&type=group&limit=10")
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(payload["returned"], 1)
+        self.assertEqual(payload["source"], "DuckDuckGo public web index")
+        self.assertEqual(payload["results"][0]["title"], "Education Hub")
+        self.assertEqual(payload["results"][0]["url"], "https://www.facebook.com/groups/education-hub")
+
+    def test_search_status_advertises_keyless_fallback(self):
+        os.environ.pop("BRAVE_SEARCH_API_KEY", None)
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["search_configured"])
 
     def test_private_api_requires_login(self):
         self.assertEqual(self.client.get("/api/posts").status_code, 401)
