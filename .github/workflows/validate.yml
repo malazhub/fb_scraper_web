@@ -1,0 +1,39 @@
+name: Validate SocialMediaPosts
+on:
+  push:
+    branches: [socialmediaposts-safe-v1]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Test Flask API
+        run: python -m unittest discover -s tests -v
+      - name: Check Python syntax
+        run: python -m py_compile app.py tests/test_app.py
+      - name: Check static JavaScript syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path("index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+          assert scripts, "No inline JavaScript found"
+          Path("/tmp/socialmediaposts.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/socialmediaposts.js

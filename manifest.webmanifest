@@ -1,0 +1,13 @@
+{
+  "name": "SocialMediaPosts - Content Planner",
+  "short_name": "SocialMediaPosts",
+  "description": "Plan social content, destinations and manual posting schedules.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#111b2d",
+  "icons": [
+    {"src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ]
+}
