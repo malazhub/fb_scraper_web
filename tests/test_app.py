@@ -44,6 +44,24 @@ class SocialMediaPostsApiTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["title"], "Education Hub")
         self.assertEqual(payload["results"][0]["url"], "https://www.facebook.com/groups/education-hub")
 
+    def test_duckduckgo_relative_redirect_resolves_to_facebook_group(self):
+        redirect = "/l/?uddg=https%3A%2F%2Fwww.facebook.com%2Fgroups%2Flearners"
+        self.assertEqual(
+            application._unwrap_search_url(redirect),
+            "https://www.facebook.com/groups/learners",
+        )
+        self.assertEqual(
+            application._allowed_destination_url(redirect, "facebook", "group"),
+            "https://www.facebook.com/groups/learners",
+        )
+
+    def test_duckduckgo_redirect_rejects_non_group_for_group_search(self):
+        redirect = "/l/?uddg=https%3A%2F%2Fwww.facebook.com%2Feducation"
+        self.assertEqual(
+            application._allowed_destination_url(redirect, "facebook", "group"),
+            "",
+        )
+
     def test_search_status_advertises_keyless_fallback(self):
         os.environ.pop("BRAVE_SEARCH_API_KEY", None)
         response = self.client.get("/api/status")
