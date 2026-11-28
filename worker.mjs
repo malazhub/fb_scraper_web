@@ -109,7 +109,7 @@ function allowedDestinationUrl(value, platform, targetType) {
     parsed.pathname = "/groups/" + group[1] + "/";
     parsed.search = "";
   }
-  if (platform === "facebook" && targetType === "page" && /\\/groups(?:\\/|$)/i.test(parsed.pathname)) return "";
+  if (platform === "facebook" && targetType === "page" && /\/groups(?:\/|$)/i.test(parsed.pathname)) return "";
   parsed.hash = "";
   return parsed.href;
 }
