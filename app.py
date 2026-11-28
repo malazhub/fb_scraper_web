@@ -130,7 +130,7 @@ def service_status():
         "ok": True,
         "service": "smpost-search-api",
         "search_configured": True,
-        "search_provider": "Brave Search API (preferred) with DuckDuckGo public-web fallback",
+        "search_provider": "Brave Search API with DuckDuckGo public-web fallback and result completion",
         "brave_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()),
     })
 
@@ -182,14 +182,20 @@ class DuckDuckGoResultParser(HTMLParser):
 
 
 def _unwrap_search_url(value):
+    """Resolve DuckDuckGo redirect links, including its relative /l/?uddg= form."""
     value = str(value or "").strip()
     try:
         parsed = urllib.parse.urlparse(value)
-        if parsed.hostname and parsed.hostname.lower().endswith("duckduckgo.com"):
+        host = (parsed.hostname or "").lower().rstrip(".")
+        is_duckduckgo_host = (
+            host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
+        )
+        is_relative_redirect = not host and parsed.path.startswith("/l/")
+        if is_duckduckgo_host or is_relative_redirect:
             target = urllib.parse.parse_qs(parsed.query).get("uddg", [])
             if target:
-                value = target[0]
-    except ValueError:
+                value = target[0].strip()
+    except (TypeError, ValueError):
         return ""
     return value
 
@@ -290,8 +296,10 @@ def discover_destinations():
         search_query += " -site:facebook.com/groups"
 
     results = []
-    source = ""
+    providers = []
+    provider_errors = []
     api_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
+
     if api_key:
         try:
             params = urllib.parse.urlencode({
@@ -309,7 +317,6 @@ def discover_destinations():
             with urllib.request.urlopen(req, timeout=18) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             web_results = (payload.get("web") or {}).get("results") or []
-            source = "Brave public web index"
             for item in web_results:
                 canonical = _allowed_destination_url(item.get("url"), platform, target_type)
                 if not canonical:
@@ -320,11 +327,15 @@ def discover_destinations():
                     "snippet": str(item.get("description", "")).strip()[:600],
                     "domain": urllib.parse.urlparse(canonical).hostname or "",
                 })
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
-                json.JSONDecodeError, UnicodeDecodeError, OSError):
-            results = []
+            if results:
+                providers.append("Brave")
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError,
+                UnicodeDecodeError, OSError) as exc:
+            provider_errors.append("Brave: " + exc.__class__.__name__)
 
-    if not results:
+    # Fill any shortfall: Brave returns at most 20 results per request, and its
+    # index may return fewer matching Facebook group URLs than the user requested.
+    if len(results) < limit:
         try:
             raw_results = _duckduckgo_search(search_query, limit)
             for item in raw_results:
@@ -337,12 +348,9 @@ def discover_destinations():
                     "snippet": item.get("snippet", ""),
                     "domain": urllib.parse.urlparse(canonical).hostname or "",
                 })
-            source = "DuckDuckGo public web index"
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
-            return jsonify({
-                "error": "Public search is temporarily unavailable. Please retry.",
-                "detail": exc.__class__.__name__,
-            }), 502
+            providers.append("DuckDuckGo")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            provider_errors.append("DuckDuckGo: " + exc.__class__.__name__)
 
     unique = []
     seen = set()
@@ -352,13 +360,21 @@ def discover_destinations():
             unique.append(item)
         if len(unique) >= limit:
             break
+
+    if not unique and provider_errors:
+        return jsonify({
+            "error": "Public search providers could not return results. Please retry.",
+            "detail": "; ".join(provider_errors),
+        }), 502
+
+    source = " + ".join(providers) + (" public web index" if len(providers) == 1 else " public web indexes")
     return jsonify({
         "results": unique,
         "requested": limit,
         "returned": len(unique),
         "query": query,
         "platform": platform,
-        "source": source,
+        "source": source or "No public search provider returned results",
     })
 
 
