@@ -27,7 +27,12 @@ class SocialMediaPostsApiTests(unittest.TestCase):
     def test_homepage_is_available(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"SocialMedia", response.data)
+        self.assertIn(b"smpost", response.data)
+
+    def test_public_discovery_requires_search_key(self):
+        os.environ.pop("BRAVE_SEARCH_API_KEY", None)
+        response = self.client.get("/api/discover?q=education&platform=facebook&type=group&limit=10")
+        self.assertEqual(response.status_code, 503)
 
     def test_private_api_requires_login(self):
         self.assertEqual(self.client.get("/api/posts").status_code, 401)
