@@ -151,7 +151,7 @@ function allowedDestinationUrl(value, platform, targetType) {
 }
 
 function xmlTagValue(source, tag) {
-  const match = String(source || "").match(new RegExp("<" + tag + "(?:\s[^>]*)?>([\s\S]*?)</" + tag + "\s*>", "i"));
+  const match = String(source || "").match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + "\\s*>", "i"));
   if (!match) return "";
   return stripMarkup(match[1].replace(/^<!\[CDATA\[/i, "").replace(/\]\]>$/i, ""));
 }
