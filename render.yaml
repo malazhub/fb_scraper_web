@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: socialmediaposts-api-preview
+    name: smpost-search-api
     runtime: python
     plan: free
     buildCommand: pip install --no-cache-dir -r requirements.txt
@@ -13,3 +13,7 @@ services:
         sync: false
       - key: COOKIE_SECURE
         value: "true"
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://riobase.github.io"
