@@ -1,58 +1,50 @@
 # smpost
 
-A single-page social publishing workspace. The public GitHub Pages address is:
+Single-page social publishing workspace:
 
 **https://riobase.github.io/socialpost/**
 
-The repository remains `riobase/socialpost`; do not rename it.
+The repository remains \`riobase/socialpost\`. Do not rename it.
 
-## Current interface
+## Public destination search backend
 
-- Facebook-first destination discovery with a requested result count.
-- Search results appear inside the page and can be added to the destination list.
-- Select destinations with checkboxes.
-- Add Instagram, TikTok, Telegram, X, LinkedIn, YouTube, Pinterest or a custom destination using **Add destination / channel**.
-- Create one post with text and media.
-- Set one publishing date and time for all selected destinations.
-- Review and delete locally saved scheduled posts.
-- Export and restore a local JSON backup.
+The frontend is hosted by GitHub Pages, which serves static files and cannot run the Python API. The search API is now implemented as a Cloudflare Worker in \`worker.mjs\`. It uses DuckDuckGo's public web index; no Brave API key or Render service is required.
 
-## Enable in-page public destination search
+### One-time deployment connection
 
-GitHub Pages cannot run the Python search API. Deploy the included Flask service using the Render blueprint:
+A hosting account and deployment authorization are required for any live backend. This repository is configured for Cloudflare Workers:
 
-1. In Render, create a new Blueprint deployment from this repository and select `render.yaml`.
-2. Add a **Brave Search API key** as the private environment variable `BRAVE_SEARCH_API_KEY`. Do not put the key in the browser or GitHub Pages.
-3. Set `ALLOWED_ORIGINS` to `https://riobase.github.io`.
-4. After Render deploys, copy the service URL (for example, `https://your-service.onrender.com`).
-5. Paste that URL into **Search service URL** in smpost. It is saved in this browser.
+1. Create or sign in to a Cloudflare account and enable its free \`workers.dev\` subdomain under **Workers & Pages**.
+2. In Cloudflare, create an account API token with **Edit Cloudflare Workers** permission. Copy the account ID from the Cloudflare dashboard.
+3. In GitHub, open **riobase/socialpost → Settings → Secrets and variables → Actions**. Add two repository secrets:
+   - \`CLOUDFLARE_API_TOKEN\` — the token from step 2.
+   - \`CLOUDFLARE_ACCOUNT_ID\` — the Cloudflare account ID.
+4. Open **Actions → Deploy smpost search backend → Run workflow**. The workflow deploys \`worker.mjs\` and prints the Worker URL in its run summary.
+5. Open **https://riobase.github.io/socialpost/**, paste that Worker URL into **Search backend URL**, and choose **Connect backend**.
 
-Search results are publicly indexed web pages matching Facebook group URL patterns. They are not a private Facebook search API, do not include every group, and must be checked for relevance and whether the group accepts posts. The result count is a maximum requested count, not a guarantee.
+After this one-time setup, pushes that change \`worker.mjs\` or \`wrangler.toml\` automatically redeploy the backend. The deployment workflow skips cleanly until the two secrets exist. The URL is stored in this browser only.
 
-## Publishing and scheduling: important limitation
+Cloudflare's official deployment instructions: https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/
 
-The current GitHub Pages interface saves a schedule in this browser. It does **not** send a post automatically at the selected time. The Flask service currently supplies search and planning endpoints; it is not a production publisher or background scheduler.
+### Search limitations
 
-Meta removed the general Facebook Groups API and `publish_to_groups` permission. There is no normal app permission that enables automatic publishing to arbitrary public Facebook Groups. Group destinations therefore cannot be auto-posted by this app.
+Search results are publicly indexed web pages matching a platform URL pattern. They are not a private Facebook search API, do not include every group, and cannot confirm whether a group accepts posts. The requested result count is a maximum, not a guarantee. DuckDuckGo may rate-limit or change its HTML, in which case search can temporarily fail.
 
-Automatic publishing can be added only for supported destination types after the relevant provider integrations are approved and connected. For example, Facebook Page publishing requires Meta OAuth, a Page access token, Page permissions and app review/advanced access as applicable. Instagram, TikTok, X and Telegram each have separate account, API, scope and review requirements. Merely adding a channel URL does not authorize publishing.
+## Publishing and scheduling
 
-To run reliable automatic publishing, the backend still needs durable storage, encrypted OAuth token storage, a persistent scheduler/queue, retry and idempotency handling, media hosting, and provider-specific publishing workers. Do not enter social passwords, session cookies or 2FA codes in smpost.
+The current page stores post plans and media in this browser. The selected date/time is a plan; it does **not** automatically send a post. This search Worker only provides public destination discovery.
 
-## Local development
-
-```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
-export COOKIE_SECURE=false
-export BRAVE_SEARCH_API_KEY='your-search-api-key'
-python app.py
-```
+Automatic publishing requires separate, approved API integrations and authorization for each platform, a secure token store, persistent scheduler/queue, media hosting, retries and delivery tracking. Adding a destination URL does not grant publishing permission. In particular, arbitrary Facebook Group auto-posting is not supported by Meta's current public publishing APIs. Do not enter social passwords, session cookies or two-factor codes in smpost.
 
 ## Tests
 
-```bash
+Python API tests (legacy backend):
+\`\`\`bash
+pip install -r requirements.txt
 python -m unittest discover -s tests -v
-```
+\`\`\`
+
+Search Worker tests:
+\`\`\`bash
+node --test tests/test_worker.mjs
+\`\`\`
