@@ -128,12 +128,12 @@ test("LinkedIn group search only returns group URLs", async () => {
 });
 
 test("location-specific empty results retry without location and report broader results", async () => {
-  let calls = 0;
+  const queries = [];
   globalThis.fetch = async function (url) {
-    calls += 1;
     const q = new URL(url).searchParams.get("q") || "";
-    const html = q.includes("Beirut")
-      ? '<html><body>No local index results</body></html>'
+    queries.push(q);
+    const html = /Beirut|Beyrouth|Bayrut|Lebanon/i.test(q)
+      ? "<html><body>No local index results</body></html>"
       : '<a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a>';
     return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
   };
@@ -144,7 +144,7 @@ test("location-specific empty results retry without location and report broader 
     ));
     const body = await response.json();
     assert.equal(response.status, 200);
-    assert.ok(calls >= 2, 'should retry broader query after location-specific search');
+    assert.ok(queries.some(q => !/Beirut|Beyrouth|Bayrut|Lebanon/i.test(q)), "should retry without location");
     assert.equal(body.returned, 1);
     assert.equal(body.location_relaxed, true);
   } finally {
@@ -153,10 +153,10 @@ test("location-specific empty results retry without location and report broader 
 });
 
 
-test("education topic expands to related search terms", async () => {
-  let searched = "";
+test("education topic expands to related search terms and location variants", async () => {
+  const searched = [];
   globalThis.fetch = async function (url) {
-    searched = new URL(url).searchParams.get("q") || "";
+    searched.push(new URL(url).searchParams.get("q") || "");
     return new Response(
       '<a class="result__a" href="https://www.facebook.com/groups/12345">Learning community</a>',
       { status: 200, headers: { "content-type": "text/html" } }
@@ -169,10 +169,10 @@ test("education topic expands to related search terms", async () => {
     ));
     const body = await response.json();
     assert.equal(response.status, 200);
-    assert.match(searched, /learning/i);
-    assert.match(searched, /school/i);
-    assert.match(searched, /Beyrouth/i);
-    assert.match(searched, /Lebanon/i);
+    assert.ok(searched.some(q => /learning/i.test(q)));
+    assert.ok(searched.some(q => /school/i.test(q)));
+    assert.ok(searched.some(q => /Beyrouth/i.test(q)));
+    assert.ok(searched.some(q => /Lebanon/i.test(q)));
     assert.equal(body.returned, 1);
   } finally {
     globalThis.fetch = originalFetch;
