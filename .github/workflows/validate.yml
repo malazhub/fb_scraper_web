@@ -26,6 +26,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check Python syntax
         run: python -m py_compile app.py tests/test_app.py
+      - name: Test Cloudflare Worker
+        run: node --test tests/test_worker.mjs
       - name: Check static JavaScript syntax
         run: |
           python - <<'PY'
