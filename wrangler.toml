@@ -1,0 +1,4 @@
+name = "smpost-search-api"
+main = "worker.mjs"
+compatibility_date = "2026-11-28"
+workers_dev = true
