@@ -3,6 +3,9 @@ import os
 import secrets
 import sqlite3
 import uuid
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from functools import wraps
@@ -86,7 +89,7 @@ def row_to_post(row):
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return send_from_directory(APP_DIR, "index.html")
 
 
 @app.get("/api/me")
@@ -117,6 +120,141 @@ def logout():
     session.clear()
     return jsonify({"ok": True})
 
+
+
+@app.get("/api/discover")
+def discover_destinations():
+    """Search publicly indexed destination links without scraping platform pages."""
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
+    if not api_key:
+        return jsonify({"error": "In-app search is not configured. Add BRAVE_SEARCH_API_KEY to the server environment."}), 503
+
+    query = str(request.args.get("q", "")).strip()[:180]
+    platform = str(request.args.get("platform", "facebook")).lower()
+    target_type = str(request.args.get("type", "group")).lower()
+    try:
+        limit = max(1, min(100, int(request.args.get("limit", "20"))))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Result limit must be between 1 and 100."}), 400
+    if not query:
+        return jsonify({"error": "Enter a search topic."}), 400
+
+    scopes = {
+        ("facebook", "group"): "site:facebook.com/groups",
+        ("facebook", "page"): "site:facebook.com",
+        ("instagram", "profile"): "site:instagram.com",
+        ("tiktok", "profile"): "site:tiktok.com",
+        ("telegram", "channel"): "site:t.me",
+        ("telegram", "group"): "site:t.me",
+        ("x", "profile"): "(site:x.com OR site:twitter.com)",
+        ("linkedin", "page"): "site:linkedin.com",
+        ("youtube", "channel"): "site:youtube.com",
+        ("pinterest", "profile"): "site:pinterest.com",
+    }
+    scope = scopes.get((platform, target_type))
+    if platform == "other":
+        scope = ""
+    if scope is None:
+        return jsonify({"error": "This channel type is not configured for public search yet."}), 400
+
+    search_query = f"{scope} {query}".strip()
+    if platform == "facebook" and target_type == "page":
+        search_query += " -site:facebook.com/groups"
+    results, seen = [], set()
+    pages = min(10, (limit + 19) // 20)
+    for page in range(pages):
+        params = urllib.parse.urlencode({
+            "q": search_query,
+            "count": min(20, limit - len(results)),
+            "offset": page,
+            "safesearch": "moderate",
+        })
+        url = "https://api.search.brave.com/res/v1/web/search?" + params
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "X-Subscription-Token": api_key,
+            "User-Agent": "smpost/1.0",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=18) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:400]
+            return jsonify({"error": f"Search provider returned HTTP {exc.code}.", "detail": detail}), 502
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return jsonify({"error": f"Could not complete the search: {exc.__class__.__name__}."}), 502
+
+        web_results = (payload.get("web") or {}).get("results") or []
+        for item in web_results:
+            link = str(item.get("url", "")).strip()
+            try:
+                parsed = urllib.parse.urlparse(link)
+            except ValueError:
+                continue
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not host:
+                continue
+            if platform == "facebook" and host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+                continue
+            if platform == "instagram" and host not in {"instagram.com", "www.instagram.com"}:
+                continue
+            if platform == "tiktok" and host not in {"tiktok.com", "www.tiktok.com"}:
+                continue
+            if platform == "telegram" and host not in {"t.me", "www.t.me"}:
+                continue
+            if platform == "x" and host not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
+                continue
+            if platform == "linkedin" and host not in {"linkedin.com", "www.linkedin.com"}:
+                continue
+            if platform == "youtube" and host not in {"youtube.com", "www.youtube.com"}:
+                continue
+            if platform == "pinterest" and host not in {"pinterest.com", "www.pinterest.com"}:
+                continue
+            if platform == "facebook" and target_type == "group" and "/groups/" not in parsed.path:
+                continue
+            if platform == "facebook" and target_type == "page" and "/groups/" in parsed.path:
+                continue
+            canonical = link.split("#", 1)[0]
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            results.append({
+                "title": str(item.get("title", "")).strip()[:240] or host,
+                "url": canonical,
+                "snippet": str(item.get("description", "")).strip()[:600],
+                "domain": host,
+            })
+            if len(results) >= limit:
+                break
+        if len(results) >= limit or len(web_results) < min(20, limit - len(results) + len(web_results)):
+            break
+        if not (payload.get("query") or {}).get("more_results_available", False):
+            break
+
+    return jsonify({
+        "results": results[:limit],
+        "requested": limit,
+        "returned": min(len(results), limit),
+        "query": query,
+        "platform": platform,
+        "source": "Brave public web index",
+    })
+
+
+@app.after_request
+def add_search_cors(response):
+    origin = request.headers.get("Origin", "")
+    allowed = {
+        item.strip() for item in
+        os.environ.get("ALLOWED_ORIGINS", "https://riobase.github.io").split(",")
+        if item.strip()
+    }
+    if origin in allowed:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 @app.get("/api/posts")
 @require_login
