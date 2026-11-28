@@ -122,6 +122,16 @@ def logout():
 
 
 
+
+@app.get("/api/status")
+def service_status():
+    return jsonify({
+        "ok": True,
+        "service": "smpost-search-api",
+        "search_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()),
+        "search_provider": "Brave Search API",
+    })
+
 @app.get("/api/discover")
 def discover_destinations():
     """Search publicly indexed destination links without scraping platform pages."""
