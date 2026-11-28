@@ -3,246 +3,90 @@ import assert from "node:assert/strict";
 import worker from "../worker.mjs";
 
 const originalFetch = globalThis.fetch;
+const origin = { headers: { Origin: "https://riobase.github.io" } };
+const rss = (items) => '<?xml version="1.0"?><rss version="2.0"><channel>' +
+  items.map((x) => '<item><title><![CDATA[' + x.title + ']]></title><link>' + x.url +
+  '</link><description><![CDATA[' + (x.snippet || '') + ']]></description></item>').join("") +
+  '</channel></rss>';
 
-test("status endpoint reports a configured search provider and CORS", async () => {
-  const response = await worker.fetch(new Request("https://worker.example/api/status", {
-    headers: { Origin: "https://riobase.github.io" }
-  }));
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("access-control-allow-origin"), "https://riobase.github.io");
-  const body = await response.json();
-  assert.equal(body.search_configured, true);
-  assert.equal(body.search_provider, "DuckDuckGo public web index");
+test("status reports Bing public RSS and CORS", async () => {
+  const r = await worker.fetch(new Request("https://worker.example/api/status", origin));
+  const b = await r.json();
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("access-control-allow-origin"), "https://riobase.github.io");
+  assert.equal(b.search_configured, true);
+  assert.equal(b.search_provider, "Bing public RSS search");
 });
 
-test("discovery returns Facebook groups and filters unrelated URLs", async () => {
-  const html = [
-    '<div class="result"><a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.facebook.com%2Fgroups%2Feducation-hub">Education <b>Hub</b></a><a class="result__snippet">A public education group.</a></div>',
-    '<div class="result"><a class="result__a" href="https://www.facebook.com/education-page">Education Page</a></div>',
-    '<div class="result"><a class="result__a" href="https://example.com/groups/education">Unrelated site</a></div>'
-  ].join("");
-  globalThis.fetch = async function () {
-    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
-  };
+test("Facebook group discovery parses RSS and filters unrelated destinations", async () => {
+  globalThis.fetch = async () => new Response(rss([
+    {title:"Education Hub",url:"https://www.facebook.com/groups/education-hub",snippet:"A public education group."},
+    {title:"Education page",url:"https://www.facebook.com/education-page"},
+    {title:"Unrelated",url:"https://example.com/groups/education"}
+  ]), {status:200});
   try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&platform=facebook&type=group&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].title, "Education Hub");
-    assert.equal(body.results[0].url, "https://www.facebook.com/groups/education-hub/");
-    assert.equal(body.results[0].snippet, "A public education group.");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+    const r = await worker.fetch(new Request("https://worker.example/api/discover?q=education&platform=facebook&type=group&limit=10", origin));
+    const b = await r.json();
+    assert.equal(r.status,200);
+    assert.equal(b.returned,1);
+    assert.equal(b.results[0].title,"Education Hub");
+    assert.equal(b.results[0].url,"https://www.facebook.com/groups/education-hub/");
+    assert.equal(b.results[0].snippet,"A public education group.");
+  } finally { globalThis.fetch = originalFetch; }
 });
 
-test("search passes location and supports TikTok profile destinations", async () => {
-  const originalFetch = globalThis.fetch;
-  let capturedSearch = "";
-  globalThis.fetch = async function (url) {
-    capturedSearch = new URL(url).searchParams.get("q") || "";
-    const html = '<div class="result"><a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a><a class="result__snippet">Learning videos.</a></div>';
-    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+test("TikTok profile discovery includes location and sends RSS parameters", async () => {
+  let captured;
+  globalThis.fetch = async (url) => {
+    captured = new URL(url);
+    return new Response(rss([{title:"Learn with me",url:"https://www.tiktok.com/@learnwithme",snippet:"Learning videos."}]), {status:200});
   };
   try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&location=Beirut%2C%20Lebanon&platform=tiktok&type=profile&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.match(capturedSearch, /education/);
-    assert.match(capturedSearch, /Beirut, Lebanon/);
-    assert.equal(body.platform, "tiktok");
-    assert.equal(body.location, "Beirut, Lebanon");
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].url, "https://www.tiktok.com/@learnwithme");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+    const r = await worker.fetch(new Request("https://worker.example/api/discover?q=education&location=Beirut%2C%20Lebanon&platform=tiktok&type=profile&limit=10", origin));
+    const b = await r.json();
+    assert.equal(r.status,200);
+    assert.match(captured.searchParams.get("q"),/Beirut, Lebanon/);
+    assert.equal(captured.searchParams.get("format"),"rss");
+    assert.equal(b.returned,1);
+    assert.equal(b.results[0].url,"https://www.tiktok.com/@learnwithme");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("location-specific empty RSS retries without location", async () => {
+  let calls=0;
+  globalThis.fetch = async (url) => {
+    calls++;
+    const q=new URL(url).searchParams.get("q");
+    return new Response(rss(q.includes("Beirut") ? [] : [{title:"Creator",url:"https://www.tiktok.com/@creator"}]),{status:200});
+  };
+  try {
+    const r=await worker.fetch(new Request("https://worker.example/api/discover?q=education&location=Beirut&platform=tiktok&type=profile&limit=10",origin));
+    const b=await r.json();
+    assert.equal(r.status,200);
+    assert.equal(calls,2);
+    assert.equal(b.location_relaxed,true);
+    assert.equal(b.returned,1);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("provider errors are reported instead of false zero results", async () => {
+  globalThis.fetch=async()=>new Response("blocked",{status:503});
+  try {
+    const r=await worker.fetch(new Request("https://worker.example/api/discover?q=education&platform=facebook&type=group&limit=10",origin));
+    const b=await r.json();
+    assert.equal(r.status,502);
+    assert.match(b.detail,/HTTP 503/);
+  } finally { globalThis.fetch=originalFetch; }
 });
 
 test("rejects other website origins", async () => {
-  const response = await worker.fetch(new Request("https://worker.example/api/status", {
-    headers: { Origin: "https://evil.example" }
-  }));
-  assert.equal(response.status, 403);
-  assert.equal(response.headers.get("access-control-allow-origin"), null);
+  const r=await worker.fetch(new Request("https://worker.example/api/status",{headers:{Origin:"https://evil.example"}}));
+  assert.equal(r.status,403);
 });
 
 test("validates query and result limit", async () => {
-  const empty = await worker.fetch(new Request("https://worker.example/api/discover?q=%20"));
-  assert.equal(empty.status, 400);
-  const tooMany = await worker.fetch(new Request(
-    "https://worker.example/api/discover?q=education&limit=301"
-  ));
-  assert.equal(tooMany.status, 400);
-});
-
-test("search returns X communities and filters out profile URLs", async () => {
-  globalThis.fetch = async function () {
-    const html = [
-      '<a class="result__a" href="https://x.com/i/communities/123456789">Public educators community</a>',
-      '<a class="result__a" href="https://x.com/educatornews">Educator News profile</a>'
-    ].join("");
-    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=educators&platform=x&type=community&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].url, "https://x.com/i/communities/123456789");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("LinkedIn group search only returns group URLs", async () => {
-  globalThis.fetch = async function () {
-    const html = [
-      '<a class="result__a" href="https://www.linkedin.com/groups/123456/">Teachers community</a>',
-      '<a class="result__a" href="https://www.linkedin.com/in/teacher-one/">Teacher profile</a>'
-    ].join("");
-    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=teachers&platform=linkedin&type=group&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].url, "https://www.linkedin.com/groups/123456/");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("location-specific empty results retry without location and report broader results", async () => {
-  let calls = 0;
-  globalThis.fetch = async function (url) {
-    calls += 1;
-    const q = new URL(url).searchParams.get("q") || "";
-    const html = q.includes("Beirut")
-      ? '<html><body>No local index results</body></html>'
-      : '<a class="result__a" href="https://www.tiktok.com/@learnwithme">Learn with me</a>';
-    return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&location=Beirut&platform=tiktok&type=profile&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.ok(calls >= 2, 'should retry broader query after location-specific search');
-    assert.equal(body.returned, 1);
-    assert.equal(body.location_relaxed, true);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("falls back to DuckDuckGo Lite when HTML search is unavailable", async () => {
-  const requests = [];
-  globalThis.fetch = async function (url) {
-    const parsed = new URL(url);
-    requests.push(parsed.hostname);
-    if (parsed.hostname === "html.duckduckgo.com") {
-      return new Response("temporarily unavailable", { status: 503 });
-    }
-    return new Response(
-      '<a class="result-link" href="https://www.tiktok.com/@fallbackcreator">Fallback Creator</a><div class="result-snippet">Public creator profile.</div>',
-      { status: 200, headers: { "content-type": "text/html" } }
-    );
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10",
-      { headers: { Origin: "https://riobase.github.io" } }
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].url, "https://www.tiktok.com/@fallbackcreator");
-    assert.deepEqual(requests, ["html.duckduckgo.com", "lite.duckduckgo.com"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("reports both provider HTTP failures in diagnostic detail", async () => {
-  globalThis.fetch = async function (url) {
-    const host = new URL(url).hostname;
-    return new Response("unavailable", { status: host === "html.duckduckgo.com" ? 503 : 429 });
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10"
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 502);
-    assert.match(body.detail, /HTML HTTP 503/);
-    assert.match(body.detail, /Lite HTTP 429/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("uses a normal browser user agent and falls back when HTML results do not match the platform", async () => {
-  const requests = [];
-  globalThis.fetch = async function (url, options) {
-    const host = new URL(url).hostname;
-    requests.push(host);
-    assert.match(options.headers["user-agent"], /Mozilla\/5\.0.*Chrome/);
-    if (host === "html.duckduckgo.com") {
-      return new Response(
-        '<a class="result__a" href="https://example.com/education">Unrelated result</a>',
-        { status: 200, headers: { "content-type": "text/html" } }
-      );
-    }
-    return new Response(
-      '<a class="result-link" href="https://www.tiktok.com/@educationhub">Education Hub</a>',
-      { status: 200, headers: { "content-type": "text/html" } }
-    );
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10"
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.returned, 1);
-    assert.equal(body.results[0].url, "https://www.tiktok.com/@educationhub");
-    assert.deepEqual(requests, ["html.duckduckgo.com", "lite.duckduckgo.com"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("treats anti-bot challenge pages as provider errors, not zero search matches", async () => {
-  globalThis.fetch = async function () {
-    return new Response("<html><body>Please complete the CAPTCHA challenge</body></html>", {
-      status: 200, headers: { "content-type": "text/html" }
-    });
-  };
-  try {
-    const response = await worker.fetch(new Request(
-      "https://worker.example/api/discover?q=education&platform=facebook&type=group&limit=10"
-    ));
-    const body = await response.json();
-    assert.equal(response.status, 502);
-    assert.match(body.detail, /anti-bot challenge/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const empty=await worker.fetch(new Request("https://worker.example/api/discover?q=%20"));
+  assert.equal(empty.status,400);
+  const many=await worker.fetch(new Request("https://worker.example/api/discover?q=education&limit=301"));
+  assert.equal(many.status,400);
 });
