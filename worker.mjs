@@ -213,7 +213,7 @@ async function searchPublicWeb(query, limit, platform, targetType) {
       if (results.length >= limit) break;
     }
 
-    if (pageResults.length < pageSize || results.length >= limit || results.length === before) break;
+    if (pageResults.length < pageSize || results.length >= limit) break;
   }
   return results;
 }
@@ -294,6 +294,28 @@ export default {
         rawResults = await searchPublicWeb(broaderQuery, candidateLimit, platform, targetType);
         results = collect(rawResults);
         locationRelaxed = results.length > 0;
+      }
+      // Retry without strict site: scope when the index interprets it too narrowly.
+      // Returned URLs still pass the same strict platform/type validation.
+      if (!results.length) {
+        const hints = {
+          "facebook:group": "Facebook public groups", "facebook:page": "Facebook pages",
+          "instagram:profile": "Instagram accounts", "tiktok:profile": "TikTok creators",
+          "telegram:group": "Telegram groups", "telegram:channel": "Telegram channels",
+          "x:profile": "X Twitter profiles", "x:community": "X Twitter communities",
+          "linkedin:page": "LinkedIn company pages", "linkedin:group": "LinkedIn groups",
+          "linkedin:profile": "LinkedIn profiles", "youtube:channel": "YouTube channels",
+          "pinterest:profile": "Pinterest profiles", "pinterest:board": "Pinterest boards"
+        };
+        const hint = hints[platform + ":" + targetType] || "";
+        const naturalQuery = (query + " " + hint + (location && !locationRelaxed ? " " + location : "")).trim();
+        rawResults = await searchPublicWeb(naturalQuery, candidateLimit, platform, targetType);
+        results = collect(rawResults);
+        if (!results.length && location) {
+          rawResults = await searchPublicWeb((query + " " + hint).trim(), candidateLimit, platform, targetType);
+          results = collect(rawResults);
+          locationRelaxed = results.length > 0;
+        }
       }
 
       return responseJson({
