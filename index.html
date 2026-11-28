@@ -59,6 +59,17 @@
 .onepage .channelForm[data-platform="pinterest"]{background:#fff0f2;border-color:#f1cbd2}
 .onepage .channelForm[data-platform="other"]{background:#f4f0ff;border-color:#dfd4f7}
 .onepage .networkBadge{display:inline-block}
+.onepage .destrow.platform-facebook,.onepage .result.platform-facebook{background:#edf4ff;border-color:#cbdcff}
+.onepage .destrow.platform-instagram,.onepage .result.platform-instagram{background:#fff0f6;border-color:#f5cfe0}
+.onepage .destrow.platform-tiktok,.onepage .result.platform-tiktok{background:#eafafb;border-color:#bfe9eb}
+.onepage .destrow.platform-telegram,.onepage .result.platform-telegram{background:#edf8ff;border-color:#c8e6f8}
+.onepage .destrow.platform-x,.onepage .result.platform-x{background:#f2f2f2;border-color:#d9d9d9}
+.onepage .destrow.platform-linkedin,.onepage .result.platform-linkedin{background:#edf5ff;border-color:#c9ddf6}
+.onepage .destrow.platform-youtube,.onepage .result.platform-youtube{background:#fff0ef;border-color:#f4ceca}
+.onepage .destrow.platform-pinterest,.onepage .result.platform-pinterest{background:#fff0f2;border-color:#f1cbd2}
+.onepage .destrow.platform-other,.onepage .result.platform-other{background:#f4f0ff;border-color:#dfd4f7}
+.onepage .destrow{padding:10px 12px}
+
 @media(max-width:620px){.onepage .hoursGrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 
 .onepage .inlineCheck{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;color:#385844}
@@ -137,7 +148,7 @@ function chosenPlatforms(){return Array.from(new Set(Array.from(selectedDestinat
 function dests(p){return state.destinations.filter(function(d){return d.platform===p})}
 function toggleDestination(id,on){if(on)selectedDestinationIds.add(id);else selectedDestinationIds.delete(id)}
 function renderPickers(){renderDests()}
-function renderDests(){var box=$('destList');if(!box)return;if(!state.destinations.length){box.innerHTML='<div class="empty">No destinations saved yet.</div>';return}box.innerHTML=state.destinations.map(function(d){var checked=selectedDestinationIds.has(d.id);return '<label class="destrow"><input type="checkbox" '+(checked?'checked':'')+' onchange="toggleDestination(\''+d.id+'\',this.checked)"><span class="destname"><strong>'+esc(d.name)+'</strong><small>'+esc(d.type||'destination')+' · '+esc(d.url)+'</small></span><span class="networkBadge">'+esc(names(d.platform))+'</span><button type="button" class="btn danger smallbtn" onclick="event.preventDefault();removeDest(\''+d.id+'\')">×</button></label>'}).join('')}
+function renderDests(){var box=$('destList');if(!box)return;if(!state.destinations.length){box.innerHTML='<div class="empty">No destinations saved yet.</div>';return}box.innerHTML=state.destinations.map(function(d){var checked=selectedDestinationIds.has(d.id);return '<label class="destrow platform-'+esc(d.platform)+'"><input type="checkbox" '+(checked?'checked':'')+' onchange="toggleDestination(\''+d.id+'\',this.checked)"><span class="destname"><strong>'+esc(d.name)+'</strong><small>'+esc(d.type||'destination')+' · '+esc(d.url)+'</small></span><span class="networkBadge">'+esc(names(d.platform))+'</span><button type="button" class="btn danger smallbtn" onclick="event.preventDefault();removeDest(\''+d.id+'\')">×</button></label>'}).join('')}
 function toggleChannelForm(){var opening=$('channelForm').classList.contains('hidden');$('channelForm').classList.toggle('hidden');if(opening)updateDestinationTypeOptions()}
 function renderSlots(){var box=$('scheduleList'),posts=state.posts||[];if(!box)return;$('queueCount').textContent=posts.length;box.innerHTML=posts.length?posts.map(function(p){var slot=(p.schedule||[])[0],repeat=p.recurrence&&p.recurrence.mode==='daily'?'Daily · '+p.recurrence.times.length+' times/day':p.recurrence&&p.recurrence.mode==='dates'?'Selected dates · '+p.recurrence.dates.length+' date(s)':p.recurrence&&p.recurrence.times&&p.recurrence.times.length>1?'Multiple times · '+p.recurrence.times.length+' per date':'One-time',when=slot?new Date(slot.when).toLocaleString():'Not scheduled',targets=(p.destinations||[]).map(function(id){var d=state.destinations.find(function(x){return x.id===id});return d?d.name:'Saved destination'}).join(', ');return '<div class="item"><div><strong>'+esc((p.caption||'Media post').slice(0,100))+'</strong><div class="meta">'+esc(repeat)+' · first: '+esc(when)+' · '+esc(targets)+'</div></div><div class="item-actions"><button class="btn danger smallbtn" onclick="deletePost(\''+p.id+'\')">Delete</button></div></div>'}).join(''):'<div class="empty">No scheduled posts yet.</div>'}
 $('caption').addEventListener('input',function(){$('charCount').textContent=$('caption').value.length+' / 10,000'});
