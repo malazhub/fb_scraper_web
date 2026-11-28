@@ -28,7 +28,7 @@ function responseJson(payload, status, origin) {
     headers.set("access-control-allow-headers", "Content-Type");
     headers.set("access-control-max-age", "86400");
   }
-  return new Response(JSON.stringify(payload), { status: status || 200, headers });
+  return new Response(status === 204 ? null : JSON.stringify(payload), { status: status || 200, headers });
 }
 
 function decodeEntities(value) {
