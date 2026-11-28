@@ -5,7 +5,7 @@ const SEARCH_SCOPES = {
   "facebook:group": "site:facebook.com/groups",
   "facebook:page": "site:facebook.com -site:facebook.com/groups",
   "instagram:profile": "site:instagram.com",
-  "tiktok:profile": "site:tiktok.com/@",
+  "tiktok:profile": "site:tiktok.com",
   "telegram:group": "site:t.me",
   "telegram:channel": "site:t.me",
   "x:profile": "(site:x.com OR site:twitter.com) -inurl:/status/ -inurl:/i/communities/",
