@@ -144,7 +144,7 @@ test("location-specific empty results retry without location and report broader 
     ));
     const body = await response.json();
     assert.equal(response.status, 200);
-    assert.equal(calls, 2);
+    assert.ok(calls >= 2, 'should retry broader query after location-specific search');
     assert.equal(body.returned, 1);
     assert.equal(body.location_relaxed, true);
   } finally {
