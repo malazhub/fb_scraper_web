@@ -151,3 +151,49 @@ test("location-specific empty results retry without location and report broader 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("falls back to DuckDuckGo Lite when HTML search is unavailable", async () => {
+  const requests = [];
+  globalThis.fetch = async function (url) {
+    const parsed = new URL(url);
+    requests.push(parsed.hostname);
+    if (parsed.hostname === "html.duckduckgo.com") {
+      return new Response("temporarily unavailable", { status: 503 });
+    }
+    return new Response(
+      '<a class="result-link" href="https://www.tiktok.com/@fallbackcreator">Fallback Creator</a><div class="result-snippet">Public creator profile.</div>',
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10",
+      { headers: { Origin: "https://riobase.github.io" } }
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.returned, 1);
+    assert.equal(body.results[0].url, "https://www.tiktok.com/@fallbackcreator");
+    assert.deepEqual(requests, ["html.duckduckgo.com", "lite.duckduckgo.com"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports both provider HTTP failures in diagnostic detail", async () => {
+  globalThis.fetch = async function (url) {
+    const host = new URL(url).hostname;
+    return new Response("unavailable", { status: host === "html.duckduckgo.com" ? 503 : 429 });
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://worker.example/api/discover?q=education&platform=tiktok&type=profile&limit=10"
+    ));
+    const body = await response.json();
+    assert.equal(response.status, 502);
+    assert.match(body.detail, /HTML HTTP 503/);
+    assert.match(body.detail, /Lite HTTP 429/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
