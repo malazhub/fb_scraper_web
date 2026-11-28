@@ -1,9 +1,15 @@
 services:
   - type: web
-    name: facebookanalyser
+    name: socialmediaposts-api-preview
     runtime: python
     plan: free
-    buildCommand: |
-      pip install --no-cache-dir -r requirements.txt
-      playwright install chromium
-    startCommand: gunicorn app:app --workers 1 --threads 1 --timeout 300
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 2 --timeout 120
+    healthCheckPath: /api/me
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: APP_PASSWORD
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
