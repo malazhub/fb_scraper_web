@@ -172,27 +172,41 @@ function extractResults(html) {
   }).filter(function (item) { return item.title && item.url; });
 }
 
-async function searchPublicWeb(query, limit) {
+function classifySearchPage(html, parsedCount) {
+  const source = String(html || "");
+  if (/anomaly-modal|captcha|challenge|unusual traffic|verify (?:that )?you are human|automated quer(?:y|ies)/i.test(source)) {
+    return "blocked";
+  }
+  if (parsedCount > 0) return "results";
+  if (/no (?:web )?results|no results found|no local index results/i.test(source)) {
+    return "empty";
+  }
+  return "unknown";
+}
+
+async function searchPublicWeb(query, limit, platform, targetType) {
   const results = [];
   const seen = new Set();
   const endpoints = [SEARCH_ENDPOINT, SEARCH_LITE_ENDPOINT];
 
   for (let offset = 0; offset < limit; offset += 30) {
     let pageResults = [];
+    let pageHadFullResultSet = false;
+    let healthyProvider = false;
     const failures = [];
+
     for (const endpoint of endpoints) {
       const url = new URL(endpoint);
       url.searchParams.set("q", query);
       if (endpoint === SEARCH_ENDPOINT) {
         url.searchParams.set("s", String(offset));
-        url.searchParams.set("kl", "wt-wt");
       }
       try {
         const upstream = await fetch(url.toString(), {
           headers: {
             "accept": "text/html,application/xhtml+xml",
             "accept-language": "en-US,en;q=0.9",
-            "user-agent": "smpost-search/1.0 (+https://riobase.github.io/socialpost/)"
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           },
           cf: { cacheTtl: 0, cacheEverything: false }
         });
@@ -200,23 +214,52 @@ async function searchPublicWeb(query, limit) {
           failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML HTTP " : "DuckDuckGo Lite HTTP ") + upstream.status);
           continue;
         }
-        pageResults = extractResults(await upstream.text());
-        if (pageResults.length) break;
+
+        const html = await upstream.text();
+        const parsed = extractResults(html);
+        const pageStatus = classifySearchPage(html, parsed.length);
+        if (pageStatus === "blocked") {
+          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML" : "DuckDuckGo Lite") + " returned an anti-bot challenge");
+          continue;
+        }
+        if (pageStatus === "unknown") {
+          failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML" : "DuckDuckGo Lite") + " returned an unrecognized page instead of search results");
+          continue;
+        }
+
+        healthyProvider = true;
+        if (pageStatus === "empty") continue;
+
+        const matching = parsed.filter(function (item) {
+          return !!allowedDestinationUrl(item.url, platform, targetType);
+        });
+        if (matching.length) {
+          pageResults = matching;
+          pageHadFullResultSet = parsed.length >= 30;
+          break;
+        }
+        // Do not stop on irrelevant links. Let the Lite endpoint try the
+        // same query before reporting that this platform has no matches.
       } catch (error) {
-        failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML: " : "DuckDuckGo Lite: ") + String(error && error.message ? error.message : error));
+        failures.push((endpoint === SEARCH_ENDPOINT ? "DuckDuckGo HTML: " : "DuckDuckGo Lite: ") +
+          String(error && error.message ? error.message : error));
       }
     }
-    if (!pageResults.length && failures.length === endpoints.length) {
+
+    if (!healthyProvider && failures.length === endpoints.length) {
       throw new Error(failures.join("; ").slice(0, 220));
     }
+
     const before = results.length;
     for (const item of pageResults) {
-      if (seen.has(item.url)) continue;
-      seen.add(item.url);
-      results.push(item);
+      const canonical = allowedDestinationUrl(item.url, platform, targetType);
+      if (!canonical || seen.has(canonical)) continue;
+      seen.add(canonical);
+      results.push(Object.assign({}, item, { url: canonical }));
       if (results.length >= limit) break;
     }
-    if (pageResults.length < 30 || results.length >= limit || results.length === before) break;
+
+    if (!pageHadFullResultSet || results.length >= limit || results.length === before) break;
   }
   return results;
 }
@@ -289,12 +332,12 @@ export default {
         return results;
       };
 
-      let rawResults = await searchPublicWeb(searchQuery, candidateLimit);
+      let rawResults = await searchPublicWeb(searchQuery, candidateLimit, platform, targetType);
       let results = collect(rawResults);
       let locationRelaxed = false;
       if (!results.length && location) {
         const broaderQuery = (scope + " " + query).trim();
-        rawResults = await searchPublicWeb(broaderQuery, candidateLimit);
+        rawResults = await searchPublicWeb(broaderQuery, candidateLimit, platform, targetType);
         results = collect(rawResults);
         locationRelaxed = results.length > 0;
       }
