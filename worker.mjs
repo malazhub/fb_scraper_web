@@ -194,6 +194,7 @@ export default {
     }
 
     const query = String(url.searchParams.get("q") || "").trim().slice(0, 180);
+    const location = String(url.searchParams.get("location") || "").trim().slice(0, 120);
     const platform = String(url.searchParams.get("platform") || "facebook").toLowerCase();
     const targetType = String(url.searchParams.get("type") || "group").toLowerCase();
     const requestedLimit = Number(url.searchParams.get("limit") || "20");
@@ -208,7 +209,7 @@ export default {
       return responseJson({ error: "This channel type is not configured for public search yet." }, 400, origin);
     }
 
-    let searchQuery = (scope + " " + query).trim();
+    let searchQuery = (scope + " " + query + (location ? " " + location : "")).trim();
     if (platform === "facebook" && targetType === "page") searchQuery += " -site:facebook.com/groups";
 
     try {
@@ -234,6 +235,7 @@ export default {
         requested: requestedLimit,
         returned: results.length,
         query: query,
+        location: location,
         platform: platform,
         source: "DuckDuckGo public web index"
       }, 200, origin);
